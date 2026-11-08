@@ -77,7 +77,7 @@ function normalizeDb(db) {
   return db;
 }
 function defaultDay(k) {
-  return { enabled: true, recipeId: null, people: { ...DEFAULT_PEOPLE[k] }, snacks: '', filter: { tags: [], minRating: 0 } };
+  return { enabled: true, recipeId: null, custom: '', people: { ...DEFAULT_PEOPLE[k] }, snacks: '', filter: { tags: [], minRating: 0 } };
 }
 // Read-only view of a day (does not create anything).
 function getDay(db, wk, k) {
@@ -291,6 +291,7 @@ function renderWeekCard(wk, label) {
     let meal;
     if (!day.enabled) meal = '<div class="meal none">No dinner planned</div>';
     else if (r) meal = `<div class="meal"><button class="title-link" data-action="show-recipe" data-id="${r.id}">${esc(r.title)}</button></div>`;
+    else if (day.custom) meal = `<div class="meal custom">✏️ ${esc(day.custom)}</div>`;
     else meal = '<div class="meal none">Not chosen yet</div>';
     return `<div class="day ${isoDate(date) === today ? 'today' : ''}">
       <div class="dname">${d.n} · ${fmtShort(date)}</div>
@@ -345,13 +346,16 @@ function renderPlan() {
       </div>
       <div class="sec pick">
         <span class="lab">Dinner</span>
-        ${r ? `<button class="title-link" data-action="show-recipe" data-id="${r.id}">${esc(r.title)}</button> ${stars(r.rating)}` : '<span class="muted">Not chosen yet</span>'}
+        ${r ? `<button class="title-link" data-action="show-recipe" data-id="${r.id}">${esc(r.title)}</button> ${stars(r.rating)}`
+          : day.custom ? `<span class="custom">✏️ ${esc(day.custom)}</span>` : '<span class="muted">Not chosen yet</span>'}
         ${warn}
         <div class="row" style="margin-top:6px">
           <button class="btn sm" data-action="reroll" data-day="${d.k}" title="Pick another random recipe for this day">🎲 Shuffle</button>
-          ${r ? `<button class="btn sm" data-action="clear-day" data-day="${d.k}">Clear</button>` : ''}
+          ${r || day.custom ? `<button class="btn sm" data-action="clear-day" data-day="${d.k}">Clear</button>` : ''}
         </div>
         ${recipeCombo(`m-${wk}-${d.k}`, d.k, active, day.recipeId, new Set([...neigh, ...sameWeek]))}
+        <input type="text" class="full-in" data-action="custom" data-day="${d.k}" value="${esc(day.custom)}"
+          placeholder="…or write your own" title="e.g. “Something with the chicken” — kept when you press Go">
       </div>
       <div class="sec">
         <span class="lab">People</span>
@@ -373,7 +377,7 @@ function renderPlan() {
     </div>
     ${db.recipes.length ? '' : '<p class="card">No recipes yet. Add some in the <b>Recipes</b> tab first.</p>'}
     <div class="plan-grid">${cards}</div>
-    <p class="small muted">Suggestions never repeat a recipe within the week or from the ${state.planWeek === 'next' ? 'current' : 'next'} week. Choosing manually can override this.</p>`;
+    <p class="small muted">Go keeps days with a free-text dinner. Suggestions never repeat a recipe within the week or from the ${state.planWeek === 'next' ? 'current' : 'next'} week. Choosing manually can override this.</p>`;
 }
 
 function renderRecipes() {
@@ -455,11 +459,13 @@ function showRecipe(id) {
   </div>`);
 }
 
-let draft = null; // recipe being edited
+let draft = null, draftOrig = ''; // recipe being edited
 function editRecipe(id) {
   const r = id ? recipeById(state.db, id) : null;
   draft = r ? clone(r) : { id: null, title: '', link: '', description: '', tags: [], rating: 0, active: true };
+  draftOrig = JSON.stringify(draft);
   renderEditor();
+  $('#rform [name=title]').focus();
 }
 function renderEditor() {
   const d = draft;
@@ -467,7 +473,7 @@ function renderEditor() {
   openModal(`<form class="form" id="rform">
     <h2 style="margin:0">${d.id ? 'Edit recipe' : 'New recipe'}</h2>
     <label class="f">Title *<input type="text" name="title" value="${esc(d.title)}" required></label>
-    <label class="f">Link<input type="url" name="link" value="${esc(d.link)}" placeholder="https://…"></label>
+    <label class="f">Link<input type="text" inputmode="url" name="link" value="${esc(d.link)}" placeholder="https://…" autocomplete="off"></label>
     <label class="f">Description<textarea name="description" rows="4">${esc(d.description)}</textarea></label>
     <div><div class="small muted" style="margin-bottom:4px">Rating</div>
       <span class="star-in">${[1, 2, 3, 4, 5].map(n => `<button type="button" data-action="d-star" data-n="${n}" class="${n <= d.rating ? 'on' : ''}">★</button>`).join('')}</span>
@@ -481,15 +487,21 @@ function renderEditor() {
       <button type="submit" class="btn primary">Save</button></div>
   </form>`);
   $('#rform').addEventListener('submit', e => { e.preventDefault(); saveDraft(); });
-  $('#rform [name=title]').focus();
 }
 function syncDraftFields() {
   const f = $('#rform'); if (!f) return;
   draft.title = f.title.value; draft.link = f.link.value; draft.description = f.description.value; draft.active = f.active.checked;
 }
+function draftDirty() { syncDraftFields(); return JSON.stringify(draft) !== draftOrig; }
+// Closing the editor without saving: only via Cancel, or Esc with confirmation.
+function tryCloseModal() {
+  if ($('#rform') && draftDirty() && !confirm('Discard your changes to this recipe?')) return;
+  closeModal();
+}
 function saveDraft() {
   syncDraftFields();
-  const d = { ...draft, title: draft.title.trim(), link: draft.link.trim(), description: draft.description.trim() };
+  const link = draft.link.trim();
+  const d = { ...draft, title: draft.title.trim(), link: link && !/^[a-z]+:\/\//i.test(link) ? 'https://' + link : link, description: draft.description.trim() };
   if (!d.title) return toast('Please enter a title.');
   const now = new Date().toISOString();
   const isNew = !d.id;
@@ -509,14 +521,16 @@ function planWk() { return weekKey(state.planWeek === 'next' ? 1 : 0); }
 function goSuggest() {
   const wk = planWk();
   const db = state.db;
-  const assigned = DAYS.filter(d => getDay(db, wk, d.k).enabled && getDay(db, wk, d.k).recipeId).length;
+  // Days with a free-text dinner are a deliberate choice: Go leaves them alone.
+  const open = d => getDay(db, wk, d.k).enabled && !getDay(db, wk, d.k).custom;
+  const assigned = DAYS.filter(d => open(d) && getDay(db, wk, d.k).recipeId).length;
   if (assigned && !confirm(`Replace the ${assigned} dinner(s) already chosen for this week with new suggestions?`)) return;
   const missing = [];
   mutate(db => {
     // Clear first, so the days of this week don't block each other.
-    DAYS.forEach(d => { if (getDay(db, wk, d.k).enabled) ensureDay(db, wk, d.k).recipeId = null; });
+    DAYS.forEach(d => { if (open(d)) ensureDay(db, wk, d.k).recipeId = null; });
     // Fill the most restrictive days first, so filtered days still find a match.
-    const order = DAYS.filter(d => getDay(db, wk, d.k).enabled).sort((a, b) => candidates(db, wk, a.k).length - candidates(db, wk, b.k).length);
+    const order = DAYS.filter(open).sort((a, b) => candidates(db, wk, a.k).length - candidates(db, wk, b.k).length);
     order.forEach(d => {
       const r = pickRandom(candidates(db, wk, d.k));
       ensureDay(db, wk, d.k).recipeId = r ? r.id : null;
@@ -531,14 +545,14 @@ function reroll(k) {
   let r = pickRandom(candidates(state.db, wk, k, cur ? [cur] : []));
   if (!r && cur) return toast('No other matching recipe available for this day.');
   if (!r) return toast('No matching recipe — loosen the filter or add recipes.');
-  mutate(db => { ensureDay(db, wk, k).recipeId = r.id; }, `Shuffle ${k} (${wk}): ${r.title}`);
+  mutate(db => { const day = ensureDay(db, wk, k); day.recipeId = r.id; day.custom = ''; }, `Shuffle ${k} (${wk}): ${r.title}`);
 }
 
 // ---------------------------------------------------------------- events
 document.addEventListener('click', e => {
   const tabBtn = e.target.closest('#tabs button');
   if (tabBtn) { state.tab = tabBtn.dataset.tab; state.openMs = null; lsSet('dinnerplanner.tab', state.tab); render(); return; }
-  if (e.target.id === 'modal') { closeModal(); return; }
+  if (e.target.id === 'modal') { if (downOnBackdrop && !$('#rform')) closeModal(); return; }
   // close multi-selects when clicking outside of them
   const ms = e.target.closest('details.ms');
   document.querySelectorAll('details.ms[open]').forEach(d => { if (d !== ms) d.open = false; });
@@ -558,10 +572,10 @@ document.addEventListener('click', e => {
     case 'manual-pick': {
       const id = el.dataset.id;
       state.openMs = null;
-      mutate(db => { ensureDay(db, wk, k).recipeId = id; }, `Choose ${k} (${wk})`);
+      mutate(db => { const day = ensureDay(db, wk, k); day.recipeId = id; day.custom = ''; }, `Choose ${k} (${wk})`);
       break;
     }
-    case 'clear-day': mutate(db => { ensureDay(db, wk, k).recipeId = null; }, `Clear ${k} (${wk})`); break;
+    case 'clear-day': mutate(db => { const day = ensureDay(db, wk, k); day.recipeId = null; day.custom = ''; }, `Clear ${k} (${wk})`); break;
     case 'people': {
       const f = el.dataset.field, delta = Number(el.dataset.delta);
       mutate(db => { const p = ensureDay(db, wk, k).people; p[f] = Math.max(0, (p[f] || 0) + delta); }, `People ${k} (${wk})`);
@@ -617,6 +631,11 @@ document.addEventListener('change', e => {
       f.tags = el.checked ? [...new Set([...f.tags, v])] : f.tags.filter(t => t !== v);
     }, `Filter ${k} (${wk})`); break;
     case 'min-rating': mutate(db => { ensureDay(db, wk, k).filter.minRating = Number(el.value); }, `Filter ${k} (${wk})`); break;
+    case 'custom': {
+      const v = el.value.trim();
+      mutate(db => { const day = ensureDay(db, wk, k); day.custom = v; if (v) day.recipeId = null; }, `Free-text dinner ${k} (${wk})`);
+      break;
+    }
     case 'snacks': { const v = el.value; mutate(db => { ensureDay(db, wk, k).snacks = v; }, `Snacks ${k} (${wk})`); break; }
     case 'rtag': keepOpen(); state.rTags = el.checked ? [...state.rTags, el.dataset.value] : state.rTags.filter(t => t !== el.dataset.value); render(); break;
     case 'rsort': state.rSort = el.value; render(); break;
@@ -651,7 +670,11 @@ document.addEventListener('toggle', e => {
   state.openMs = e.target.open ? e.target.dataset.ms : (state.openMs === e.target.dataset.ms ? null : state.openMs);
   if (e.target.open) e.target.querySelector('.combo-q')?.focus();
 }, true);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+// A text selection that ends outside the box fires a click on the backdrop —
+// so the backdrop only closes when the mouse was also pressed down there.
+let downOnBackdrop = false;
+document.addEventListener('mousedown', e => { downOnBackdrop = e.target.id === 'modal'; });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').classList.contains('hidden')) tryCloseModal(); });
 // Pick up changes made by others when coming back to the tab.
 // Skipped while the user is typing or has a dropdown open — a re-render would wipe it.
 window.addEventListener('focus', () => {

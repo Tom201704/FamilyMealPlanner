@@ -110,6 +110,8 @@ h3 { font-size: 16px; margin: 0; }
 .stepper button { width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
 .stepper span { min-width: 18px; text-align: center; font-variant-numeric: tabular-nums; }
 .pday select.full { width: 100%; }
+.pday .full-in { width: 100%; margin-top: 6px; }
+.custom { font-style: italic; }
 
 /* multi select dropdown */
 details.ms { position: relative; display: inline-block; }
