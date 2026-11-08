@@ -2,13 +2,14 @@
 
 Weekly dinner planning (Monday–Friday) from your own recipe collection.
 
-- **Weeks**: this week and next week side by side, for each day the dinner (click it for details), the headcount and the snacks.
+- **Overview**: this week and next week side by side, for each day the dinner (click it for details), the headcount and the snacks.
 - **Plan**: choose *This week* or *Next week* at the top. For each day you can switch dinner on or off, narrow the choice by tags and/or a minimum rating, and press **Go**. Then reshuffle or pick manually per day, and adjust people and snacks.
   Suggestions never repeat a recipe within the same week or from the neighbouring week. A manual choice can override this, and the app shows a warning when it does.
-- **Recipes**: title, link, description, tags, 1–5 star rating, active/inactive. You can search, filter by tag and sort.
+- **Recipes**: dinner recipes and snacks/sweets (shown in a different colour), each with title, link, description, tags, a 1–3 star rating and active/inactive. Tap a tile to edit it or delete it. The *Must have* / *Exclude* filters also offer Dinner and Snack / Sweets. Only dinner recipes are suggested for dinner. Snacks can be picked in each day's snack field, next to the free text.
+- **Groceries**: a shared shopping list. Every item becomes a tile with an emoji, optionally with a shop link (e.g. Migros or Coop). Tap the tile once it's in the cart; tapping the link only opens the shop page. Recently bought items can be put back with one tap.
 - **Settings**: manage tags (add, rename, delete).
 
-Default headcount: 2 adults every day, plus 1 small kid on Mon/Tue, plus 1 big kid and 1 small kid on Wed/Thu. You can change it per day.
+Default headcount: 2 adults every day, plus 1 small kid on Mon/Tue/Fri, plus 1 big kid and 1 small kid on Wed/Thu. You can change it per day, and a changed headcount is highlighted.
 
 ## How it works
 
@@ -46,6 +47,12 @@ That keeps the URL the same.
 1. Create a **public** GitHub repository (e.g. `dinner-planner`) and push this folder to `main`.
 2. Repository **Settings → Pages**: *Deploy from a branch*, branch `main`, folder `/ (root)`.
 3. After a minute the site is live at `https://<owner>.github.io/<repo>/`. Share that link.
+
+## Updating the code
+
+`index.html` loads `style.css`, `config.js` and `app.js` with a version number (`?v=5`).
+Raise it in `index.html` whenever you upload changed files. Otherwise browsers may keep the old
+`app.js` for up to 10 minutes next to the new `index.html`.
 
 ## Run locally
 

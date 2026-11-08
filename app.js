@@ -110,6 +110,7 @@ function foodEmoji(title) { return emojiFrom([FOOD_EMOJI], title, '🍽️'); }
 function snackEmoji(title) { return emojiFrom([SNACK_EMOJI, GROCERY_EMOJI], title, '🍪'); }
 function groceryEmoji(name) { return emojiFrom([GROCERY_EMOJI, FOOD_EMOJI, SNACK_EMOJI], name, '🛒'); }
 const isSnack = r => r?.kind === 'snack';
+const TYPE_DINNER = 'type:dinner', TYPE_SNACK = 'type:snack';
 function emojiOf(r) { return isSnack(r) ? snackEmoji(r.title) : foodEmoji(r.title); }
 function hueOf(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
@@ -151,6 +152,8 @@ function normalizeDb(db) {
   db.settings = { preferRated: true, ...(db.settings || {}) };
   db.groceries = Array.isArray(db.groceries) ? db.groceries : [];
   db.groceryRecent = Array.isArray(db.groceryRecent) ? db.groceryRecent : [];
+  // Last link used per grocery name (lower case), so "Recently bought" can re-add it with its link.
+  db.groceryLinks = db.groceryLinks && typeof db.groceryLinks === 'object' ? db.groceryLinks : {};
   // Friday default gained the small kid. Upcoming Fridays that still carry the
   // old default (2 adults, no kids) get it too; past Fridays stay as they were.
   if ((db.defaultsVersion || 1) < 2) {
@@ -325,7 +328,7 @@ const state = {
   tab: lsGet('dinnerplanner.tab', 'overview'),
   planWeek: 'next',             // 'current' | 'next'
   openMs: null,                 // id of open multi-select dropdown
-  rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: false, rKind: 'all',
+  rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: false,
   loadError: null,
 };
 
@@ -337,12 +340,15 @@ function toast(msg, ms = 3500) {
 }
 
 // Multi-select dropdown with checkboxes. `id` keeps it open across re-renders.
+// Options are tag names, or {value, label, sep} (sep: draw a divider after it).
 function multiSelect(id, label, options, selected, action, extra = '', prefix = '', cls = '') {
-  const sum = selected.length ? prefix + selected.join(', ') : label;
+  options = options.map(o => typeof o === 'string' ? { value: o, label: o } : o);
+  const lab = v => { const o = options.find(x => x.value === v); return o ? o.short || o.label : v; };
+  const sum = selected.length ? prefix + selected.map(lab).join(', ') : label;
   return `<details class="ms ${cls} ${selected.length ? 'has' : ''}" data-ms="${esc(id)}" ${state.openMs === id ? 'open' : ''}>
     <summary title="${esc(sum)}">${esc(sum)}</summary>
     <div class="ms-pop">
-      ${options.length ? options.map(o => `<label><input type="checkbox" data-action="${action}" data-value="${esc(o)}" ${extra} ${selected.includes(o) ? 'checked' : ''}> ${esc(o)}</label>`).join('') : '<div class="muted small" style="padding:4px 6px">No tags yet</div>'}
+      ${options.length ? options.map(o => `<label><input type="checkbox" data-action="${action}" data-value="${esc(o.value)}" ${extra} ${selected.includes(o.value) ? 'checked' : ''}> ${esc(o.label)}</label>${o.sep ? '<div class="ms-sep"></div>' : ''}`).join('') : '<div class="muted small" style="padding:4px 6px">No tags yet</div>'}
     </div></details>`;
 }
 
@@ -529,11 +535,13 @@ function renderPlan() {
 
 function renderRecipes() {
   const db = state.db;
-  let list = db.recipes.filter(r => (state.rInactive || r.active !== false) && (state.rKind === 'all' || (state.rKind === 'snack') === isSnack(r)));
+  let list = db.recipes.filter(r => state.rInactive || r.active !== false);
   const q = state.rq.trim().toLowerCase();
   if (q) list = list.filter(r => (r.title + ' ' + (r.description || '')).toLowerCase().includes(q));
-  if (state.rTags.length) list = list.filter(r => state.rTags.every(t => (r.tags || []).includes(t)));
-  if (state.rExTags.length) list = list.filter(r => !state.rExTags.some(t => (r.tags || []).includes(t)));
+  // Type ('type:dinner' / 'type:snack') works like a tag in the Must have / Exclude dropdowns.
+  const has = (r, t) => t === TYPE_DINNER ? !isSnack(r) : t === TYPE_SNACK ? isSnack(r) : (r.tags || []).includes(t);
+  if (state.rTags.length) list = list.filter(r => state.rTags.every(t => has(r, t)));
+  if (state.rExTags.length) list = list.filter(r => !state.rExTags.some(t => has(r, t)));
   const sorters = {
     title: (a, b) => a.title.localeCompare(b.title),
     rating: (a, b) => (b.rating || 0) - (a.rating || 0) || a.title.localeCompare(b.title),
@@ -558,17 +566,16 @@ function renderRecipes() {
       </div>
       ${stars(r.rating)}
     </div>`).join('');
-  const kindBtn = (k, l) => `<button data-action="rkind" data-kind="${k}" class="${state.rKind === k ? 'active' : ''}">${l}</button>`;
+  const opts = [{ value: TYPE_DINNER, label: `🍽️ Dinner (${total - nSnack})`, short: '🍽️ Dinner' }, { value: TYPE_SNACK, label: `🍪 Snack / Sweets (${nSnack})`, short: '🍪 Snack', sep: true }, ...db.tags];
   return `<div class="row" style="margin-bottom:10px">
-      <span class="seg">${kindBtn('all', `All · ${total}`)}${kindBtn('dinner', `🍽️ Dinners · ${total - nSnack}`)}${kindBtn('snack', `🍪 Snacks · ${nSnack}`)}</span>
       <span class="spacer"></span>
       ${Store.canEdit ? `<button class="btn" data-action="new-recipe" data-kind="snack">+ Add snack</button>
       <button class="btn primary" data-action="new-recipe" data-kind="dinner">+ Add recipe</button>` : ''}
     </div>
-    <div class="row" style="margin-bottom:12px">
+    <div class="row rfilters" style="margin-bottom:12px">
       <input type="search" id="rq" placeholder="Search recipes" value="${esc(state.rq)}">
-      ${multiSelect('rtags', 'Must have: any', db.tags, state.rTags, 'rtag', '', 'Must have: ', 'inc')}
-      ${multiSelect('rxtags', 'Exclude: none', db.tags, state.rExTags, 'rxtag', '', 'Exclude: ', 'exc')}
+      ${multiSelect('rtags', 'Must have: any', opts, state.rTags, 'rtag', '', 'Must have: ', 'inc')}
+      ${multiSelect('rxtags', 'Exclude: none', opts, state.rExTags, 'rxtag', '', 'Exclude: ', 'exc')}
       <select data-action="rsort">
         ${[['title', 'Sort: Title A–Z'], ['rating', 'Sort: Rating'], ['tags', 'Sort: Tags'], ['added', 'Sort: Newest'], ['edited', 'Sort: Recently edited']]
           .map(([v, l]) => `<option value="${v}" ${state.rSort === v ? 'selected' : ''}>${l}</option>`).join('')}
@@ -583,20 +590,23 @@ function renderGroceries() {
   const db = state.db;
   const onList = new Set(db.groceries.map(x => x.name.toLowerCase()));
   const recent = db.groceryRecent.filter(n => !onList.has(n.toLowerCase()));
-  const tile = (x, action, data) => `<button class="gtile" data-action="${action}" ${data} style="--h:${hueOf(x)}">
-      <span class="ge" aria-hidden="true">${groceryEmoji(x)}</span><span class="gn">${esc(x)}</span></button>`;
+  // A div, not a button: the shop link inside must stay clickable without ticking the item off.
+  const tile = (name, link, action, data) => `<div class="gtile ${link ? 'haslink' : ''}" role="button" tabindex="0" data-action="${action}" ${data} style="--h:${hueOf(name)}">
+      <span class="ge" aria-hidden="true">${groceryEmoji(name)}</span><span class="gn">${esc(name)}</span>
+      ${link ? `<a class="glink" href="${esc(link)}" target="_blank" rel="noopener" title="${esc(link)}">🔗 ${esc(shopName(link))}</a>` : ''}</div>`;
   return `<div class="groc">
     <form class="card gadd" id="gform">
       <input type="text" id="gname" placeholder="Add something, e.g. Milk, Eggs, Bananas" autocomplete="off" enterkeyhint="done">
+      <input type="text" id="glink" inputmode="url" placeholder="🔗 Link (optional), e.g. from Migros or Coop" autocomplete="off" enterkeyhint="done">
       <button class="btn primary" type="submit">Add</button>
     </form>
     <div class="ghead"><h2>🛒 To buy${db.groceries.length ? ` <span class="count">${db.groceries.length}</span>` : ''}</h2>
       <span class="muted small">Tap an item once it's in the cart.</span></div>
-    ${db.groceries.length ? `<div class="gtiles">${db.groceries.map(x => tile(x.name, 'g-done', `data-id="${x.id}"`)).join('')}</div>`
+    ${db.groceries.length ? `<div class="gtiles">${db.groceries.map(x => tile(x.name, x.link, 'g-done', `data-id="${x.id}"`)).join('')}</div>`
       : '<div class="card gempty">🎉 Nothing left to buy.</div>'}
     ${recent.length ? `<div class="ghead"><h3>Recently bought</h3><span class="muted small">Tap to put it back on the list.</span>
         <span class="spacer"></span><button class="btn sm" data-action="g-clear-recent">Clear</button></div>
-      <div class="gtiles recent">${recent.map(n => tile(n, 'g-readd', `data-name="${esc(n)}"`)).join('')}</div>` : ''}
+      <div class="gtiles recent">${recent.map(n => tile(n, db.groceryLinks[n.toLowerCase()], 'g-readd', `data-name="${esc(n)}"`)).join('')}</div>` : ''}
   </div>`;
 }
 
@@ -688,7 +698,7 @@ function tryCloseModal() {
 function saveDraft() {
   syncDraftFields();
   const link = draft.link.trim();
-  const d = { ...draft, title: draft.title.trim(), link: link && !/^[a-z]+:\/\//i.test(link) ? 'https://' + link : link, description: draft.description.trim() };
+  const d = { ...draft, title: draft.title.trim(), link: normUrl(link), description: draft.description.trim() };
   if (!d.title) return toast('Please enter a title.');
   const now = new Date().toISOString();
   const isNew = !d.id;
@@ -717,18 +727,40 @@ function deleteRecipe(db, id, title) {
 }
 
 // ---------------------------------------------------------------- groceries
-function addGrocery(text) {
-  const names = text.split(/[,;\n]/).map(x => x.trim()).filter(Boolean).map(x => x.charAt(0).toUpperCase() + x.slice(1));
-  const input = $('#gname');
-  if (!names.length) { input?.focus(); return; }
-  const have = new Set(state.db.groceries.map(x => x.name.toLowerCase()));
+const looksLikeUrl = t => /^(https?:\/\/|www\.)\S+$|^[\w-]+(\.[\w-]+)+\/\S*$/i.test(t.trim());
+const normUrl = t => { t = (t || '').trim(); return t && !/^[a-z]+:\/\//i.test(t) ? 'https://' + t : t; };
+// "https://www.migros.ch/de/product/…" → "Migros"
+function shopName(url) {
+  try { const h = new URL(url).hostname.replace(/^www\./, '').split('.'); const n = h.length > 1 ? h[h.length - 2] : h[0]; return n.charAt(0).toUpperCase() + n.slice(1); }
+  catch { return 'Link'; }
+}
+// `link` (optional) belongs to a single item. A link pasted into the name field is used as the link too.
+function addGrocery(text, link = '') {
+  let names = text.split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+  const pasted = names.filter(looksLikeUrl);
+  if (pasted.length && !link) link = pasted[0];
+  names = names.filter(n => !looksLikeUrl(n)).map(x => x.charAt(0).toUpperCase() + x.slice(1));
+  link = normUrl(link);
+  if (link && !names.length) names = [shopName(link) + ' item'];
+  if (!names.length) { $('#gname')?.focus(); return; }
+  if (link && names.length > 1) return toast('A link can only go with one item — add the others separately.');
+  const have = new Map(state.db.groceries.map(x => [x.name.toLowerCase(), x]));
   const add = [], dup = [];
-  names.forEach(n => { const l = n.toLowerCase(); if (have.has(l)) dup.push(n); else { have.add(l); add.push({ id: uid(), name: n, added: new Date().toISOString() }); } });
+  let relink = null;
+  names.forEach(n => {
+    const l = n.toLowerCase(), old = have.get(l);
+    if (old) { if (link && old.link !== link) relink = old; else dup.push(n); }
+    else { add.push({ id: uid(), name: n, ...(link ? { link } : {}), added: new Date().toISOString() }); have.set(l, add[add.length - 1]); }
+  });
   if (dup.length) toast(`Already on the list: ${dup.join(', ')}`);
-  if (add.length) mutate(db => {
+  if (add.length || relink) mutate(db => {
     add.forEach(x => { if (!db.groceries.some(y => y.name.toLowerCase() === x.name.toLowerCase())) db.groceries.push(x); });
-  }, `Groceries: add ${add.map(x => x.name).join(', ')}`);
+    if (relink) { const it = db.groceries.find(y => y.id === relink.id); if (it) it.link = link; }
+    if (link) db.groceryLinks[names[0].toLowerCase()] = link;
+  }, `Groceries: add ${names.join(', ')}`);
+  if (relink) toast(`Link added to ${relink.name}`);
   const i = $('#gname'); if (i) { i.value = ''; i.focus(); }
+  const g = $('#glink'); if (g) g.value = '';
 }
 function groceryDone(id) {
   const item = state.db.groceries.find(x => x.id === id);
@@ -789,7 +821,6 @@ document.addEventListener('click', e => {
     case 'show-recipe': showRecipe(el.dataset.id); break;
     case 'edit-recipe': editRecipe(el.dataset.id); break;
     case 'new-recipe': editRecipe(null, el.dataset.kind); break;
-    case 'rkind': state.rKind = el.dataset.kind; render(); break;
     case 'd-kind': syncDraftFields(); draft.kind = el.dataset.kind; renderEditor(); break;
     case 'delete-recipe': {
       const r = recipeById(state.db, draft?.id);
@@ -808,7 +839,7 @@ document.addEventListener('click', e => {
       setTimeout(() => groceryDone(id), 220);
       break;
     }
-    case 'g-readd': addGrocery(el.dataset.name); break;
+    case 'g-readd': addGrocery(el.dataset.name, state.db.groceryLinks[el.dataset.name.toLowerCase()] || ''); break;
     case 'g-clear-recent': mutate(db => { db.groceryRecent = []; }, 'Groceries: clear recently bought'); break;
     case 'close': closeModal(); break;
     case 'goto-plan': state.tab = 'plan'; state.planWeek = el.dataset.week; render(); break;
@@ -894,7 +925,7 @@ document.addEventListener('change', e => {
       day.snackIds = el.checked ? [...new Set([...(day.snackIds || []), id])] : (day.snackIds || []).filter(x => x !== id);
     }, `Snacks ${k} (${wk})`); break;
     case 'snacks': { const v = el.value; mutate(db => { ensureDay(db, wk, k).snacks = v; }, `Snacks ${k} (${wk})`); break; }
-    case 'rtag': keepOpen(); state.rTags = el.checked ? [...state.rTags, el.dataset.value] : state.rTags.filter(t => t !== el.dataset.value);
+    case 'rtag': keepOpen(); state.rTags = el.checked ? [...state.rTags.filter(t => !(el.dataset.value.startsWith('type:') && t.startsWith('type:'))), el.dataset.value] : state.rTags.filter(t => t !== el.dataset.value);
       if (el.checked) state.rExTags = state.rExTags.filter(t => t !== el.dataset.value); render(); break;
     case 'rxtag': keepOpen(); state.rExTags = el.checked ? [...state.rExTags, el.dataset.value] : state.rExTags.filter(t => t !== el.dataset.value);
       if (el.checked) state.rTags = state.rTags.filter(t => t !== el.dataset.value); render(); break;
@@ -920,10 +951,10 @@ document.addEventListener('keydown', e => {
 });
 // Recipe tiles act as buttons: Enter / Space opens the editor.
 document.addEventListener('keydown', e => {
-  if (e.target.classList?.contains('rrow') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); }
+  if ((e.target.classList?.contains('rrow') || e.target.classList?.contains('gtile')) && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); }
 });
 document.addEventListener('submit', e => {
-  if (e.target.id === 'gform') { e.preventDefault(); addGrocery($('#gname').value); }
+  if (e.target.id === 'gform') { e.preventDefault(); addGrocery($('#gname').value, $('#glink').value); }
 });
 document.addEventListener('input', e => {
   if (e.target.classList.contains('combo-q')) { filterCombo(e.target); return; }
