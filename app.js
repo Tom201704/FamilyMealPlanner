@@ -194,11 +194,19 @@ const recipeById = (db, id) => db.recipes.find(r => r.id === id);
 function weekRecipeIds(db, wk, exceptDay) {
   return DAYS.filter(d => d.k !== exceptDay).map(d => getDay(db, wk, d.k)).filter(d => d.enabled && d.recipeId).map(d => d.recipeId);
 }
-// Recipes in the neighbouring weeks: next week must not repeat this week and vice versa.
-function neighbourIds(db, wk) {
-  const m = parseIso(wk);
-  return new Set([...weekRecipeIds(db, isoDate(addDays(m, -7))), ...weekRecipeIds(db, isoDate(addDays(m, 7)))]);
+// A recipe is not repeated within NO_REPEAT_WEEKS weeks before or after the planned week.
+const NO_REPEAT_WEEKS = 2;
+// Map: recipe id → the nearby weeks (Monday ISO keys) it is planned in.
+function neighbourWeeks(db, wk) {
+  const m = parseIso(wk), out = new Map();
+  for (let i = -NO_REPEAT_WEEKS; i <= NO_REPEAT_WEEKS; i++) {
+    if (!i) continue;
+    const w = isoDate(addDays(m, 7 * i));
+    weekRecipeIds(db, w).forEach(id => out.set(id, [...(out.get(id) || []), w]));
+  }
+  return out;
 }
+function neighbourIds(db, wk) { return new Set(neighbourWeeks(db, wk).keys()); }
 function candidates(db, wk, k, extraExclude = []) {
   const day = getDay(db, wk, k);
   const ex = new Set([...neighbourIds(db, wk), ...weekRecipeIds(db, wk, k), ...extraExclude]);
@@ -328,7 +336,7 @@ const state = {
   tab: lsGet('dinnerplanner.tab', 'overview'),
   planWeek: 'next',             // 'current' | 'next'
   openMs: null,                 // id of open multi-select dropdown
-  rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: false,
+  rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: true,
   loadError: null,
 };
 
@@ -449,7 +457,7 @@ function renderPlan() {
   const db = state.db;
   const byTitle = (a, b) => a.title.localeCompare(b.title);
   const active = db.recipes.filter(r => r.active !== false && !isSnack(r)).sort(byTitle);
-  const neigh = neighbourIds(db, wk);
+  const neighW = neighbourWeeks(db, wk), neigh = new Set(neighW.keys());
   const cards = DAYS.map((d, i) => {
     const day = getDay(db, wk, d.k);
     const r = day.recipeId && recipeById(db, day.recipeId);
@@ -466,7 +474,7 @@ function renderPlan() {
     const nCand = candidates(db, wk, d.k).length;
     const sameWeek = weekRecipeIds(db, wk, d.k);
     let warn = '';
-    if (r && neigh.has(r.id)) warn = `<div class="warn">⚠ Also planned in the ${state.planWeek === 'next' ? 'current' : 'next'} week</div>`;
+    if (r && neigh.has(r.id)) warn = `<div class="warn">⚠ Also planned in ${neighW.get(r.id).map(w => `week ${isoWeekNo(parseIso(w))} (${weekRange(w)})`).join(', ')}</div>`;
     else if (r && sameWeek.includes(r.id)) warn = `<div class="warn">⚠ Already planned on another day this week</div>`;
     if (r && r.active === false) warn += `<div class="warn">⚠ Recipe is inactive</div>`;
     if (isSnack(r)) warn += `<div class="warn">⚠ This is a snack, not a dinner recipe</div>`;
@@ -530,7 +538,7 @@ function renderPlan() {
     </div>
     ${db.recipes.length ? '' : '<p class="card">No recipes yet. Add some in the <b>Recipes</b> tab first.</p>'}
     <div class="plan-grid">${cards}</div>
-    <p class="small muted">Go keeps days with a free-text dinner. Suggestions never repeat a recipe within the week or from the ${state.planWeek === 'next' ? 'current' : 'next'} week. Choosing manually can override this.</p>`;
+    <p class="small muted">Go keeps days with a free-text dinner. Suggestions never repeat a recipe within the week or within ${NO_REPEAT_WEEKS} weeks before or after it. Choosing manually can override this.</p>`;
 }
 
 function renderRecipes() {
