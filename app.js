@@ -18,6 +18,7 @@ const DEFAULT_PEOPLE = {
   thu: { adults: 2, kidsBig: 1, kidsSmall: 1 },
   fri: { adults: 2, kidsBig: 0, kidsSmall: 0 },
 };
+const MAX_STARS = 3;
 const DB_PATH = 'data/db.json';
 const LOCAL_DB_KEY = 'dinnerplanner.localdb';
 
@@ -52,10 +53,26 @@ function weekRange(key) {
   return `${fmtShort(m)} – ${fmtShort(addDays(m, 4))}`;
 }
 function dayDate(key, i) { return addDays(parseIso(key), i); }
+// A day is over once its date is before today. Past days are shown but locked.
+function isPast(wk, k) { return isoDate(dayDate(wk, DAYS.findIndex(d => d.k === k))) < isoDate(new Date()); }
+
+// Playful emoji guessed from the recipe title (falls back to a plate).
+const FOOD_EMOJI = [
+  [/pizza/i, '🍕'], [/burger/i, '🍔'], [/taco|burrito|wrap|fajita|quesadilla/i, '🌮'], [/ramen|noodle|nudel|pho|udon|pad thai/i, '🍜'],
+  [/spaghetti|pasta|lasagn|penne|tagliatelle|gnocchi|ravioli|tortellini|carbonara|bolognese|macaroni|magronen/i, '🍝'],
+  [/curry|dal|dhal|masala|tikka/i, '🍛'], [/sushi|maki/i, '🍣'], [/fish|lachs|salmon|fisch|cod|tuna|thon|shrimp|crevette|prawn/i, '🐟'],
+  [/chicken|poulet|huhn|hähnchen|wings/i, '🍗'], [/steak|beef|rind|veal|kalb|escalope|schnitzel|meat|fleisch|pork|schwein/i, '🥩'],
+  [/soup|suppe|minestrone|soupe|broth/i, '🍲'], [/salad|salat/i, '🥗'], [/rice|reis|risotto|paella|biryani/i, '🍚'],
+  [/egg|eier|shakshuka|omelet|frittata/i, '🍳'], [/crêpe|crepe|pancake|waffle|pfannkuchen/i, '🥞'], [/toast|sandwich|bread|brot/i, '🥪'],
+  [/quiche|tart|wähe|pie|kuchen/i, '🥧'], [/fondue|raclette|cheese|käse/i, '🧀'], [/potato|kartoffel|rösti|gratin|mash|fries/i, '🥔'],
+  [/sausage|wurst|bratwurst/i, '🌭'], [/vegetable|gemüse|veggie|ratatouille/i, '🥦'], [/couscous|bulgur|bowl/i, '🥣'],
+];
+function foodEmoji(title) { for (const [re, e] of FOOD_EMOJI) if (re.test(title || '')) return e; return '🍽️'; }
+function hueOf(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
 function stars(n) {
   n = n || 0;
-  return `<span class="stars" title="${n} of 5">${'★'.repeat(n)}<span class="off">${'★'.repeat(5 - n)}</span></span>`;
+  return `<span class="stars" title="${n} of ${MAX_STARS}">${'★'.repeat(n)}<span class="off">${'★'.repeat(MAX_STARS - n)}</span></span>`;
 }
 function peopleText(p) {
   const parts = [`${p.adults} adult${p.adults === 1 ? '' : 's'}`];
@@ -74,6 +91,16 @@ function normalizeDb(db) {
   db.tags = Array.isArray(db.tags) ? db.tags : [];
   db.recipes = Array.isArray(db.recipes) ? db.recipes : [];
   db.weeks = db.weeks && typeof db.weeks === 'object' ? db.weeks : {};
+  db.settings = { preferRated: true, ...(db.settings || {}) };
+  // One-time conversion from the old 1–5 scale: ×3/5, rounded (1–2→1, 3–4→2, 5→3).
+  // Deterministic and flagged, so every client converts identically and only once.
+  if (db.ratingScale !== MAX_STARS) {
+    const conv = n => n ? Math.max(1, Math.round(n * MAX_STARS / 5)) : 0;
+    db.recipes.forEach(r => { r.rating = conv(r.rating); });
+    Object.values(db.weeks).forEach(w => Object.values(w.days || {}).forEach(d => { if (d.filter?.minRating) d.filter.minRating = conv(d.filter.minRating); }));
+    db.ratingScale = MAX_STARS;
+  }
+  db.recipes.forEach(r => { r.rating = Math.min(MAX_STARS, r.rating || 0); });
   return db;
 }
 function defaultDay(k) {
@@ -110,7 +137,16 @@ function candidates(db, wk, k, extraExclude = []) {
     !day.filter.excludeTags.some(t => (r.tags || []).includes(t)) &&
     !ex.has(r.id));
 }
-const pickRandom = arr => arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
+// Random pick. With "Prefer higher-rated", the chance is proportional to the
+// stars: 3★ is picked 3× as often as 1★. Unrated recipes count as 2★.
+const ratingWeight = r => r.rating || 2;
+function pickRandom(arr, weighted = state.db.settings.preferRated) {
+  if (!arr.length) return null;
+  if (!weighted) return arr[Math.floor(Math.random() * arr.length)];
+  let x = Math.random() * arr.reduce((s, r) => s + ratingWeight(r), 0);
+  for (const r of arr) { x -= ratingWeight(r); if (x < 0) return r; }
+  return arr[arr.length - 1];
+}
 function lastPlanned(db, id) {
   let last = null;
   for (const [wk, w] of Object.entries(db.weeks)) {
@@ -289,20 +325,25 @@ function renderWeekCard(wk, label) {
     const day = getDay(state.db, wk, d.k);
     const date = dayDate(wk, i);
     const r = day.recipeId && recipeById(state.db, day.recipeId);
-    let meal;
-    if (!day.enabled) meal = '<div class="meal none">No dinner planned</div>';
-    else if (r) meal = `<div class="meal"><button class="title-link" data-action="show-recipe" data-id="${r.id}">${esc(r.title)}</button></div>`;
-    else if (day.custom) meal = `<div class="meal custom">✏️ ${esc(day.custom)}</div>`;
-    else meal = '<div class="meal none">Not chosen yet</div>';
-    return `<div class="day ${isoDate(date) === today ? 'today' : ''}">
-      <div class="dname">${d.n} · ${fmtShort(date)}</div>
-      ${meal}
-      ${day.enabled ? `<div class="small muted">👥 ${peopleText(day.people)}</div>` : ''}
-      ${day.enabled && day.snacks ? `<div class="snacks">🥨 ${esc(day.snacks)}</div>` : ''}
+    let meal, emoji;
+    if (!day.enabled) { meal = '<div class="meal none">No dinner planned</div>'; emoji = '🌙'; }
+    else if (r) { meal = `<div class="meal"><button class="title-link" data-action="show-recipe" data-id="${r.id}">${esc(r.title)}</button></div>`; emoji = foodEmoji(r.title); }
+    else if (day.custom) { meal = `<div class="meal custom">${esc(day.custom)}</div>`; emoji = '✏️'; }
+    else { meal = '<div class="meal none">Not chosen yet</div>'; emoji = '🤔'; }
+    const isToday = isoDate(date) === today;
+    return `<div class="day d-${d.k} ${isToday ? 'today' : ''} ${isoDate(date) < today ? 'past' : ''}">
+      <div class="dbadge"><span>${d.n.slice(0, 3)}</span><b>${date.getDate()}</b></div>
+      <div class="dbody">
+        ${isToday ? '<span class="today-pill">Today</span>' : ''}
+        ${meal}
+        ${day.enabled ? `<div class="dmeta">👥 ${peopleText(day.people)}</div>` : ''}
+        ${day.enabled && day.snacks ? `<div class="snacks">🥨 ${esc(day.snacks)}</div>` : ''}
+      </div>
+      <div class="demoji" aria-hidden="true">${emoji}</div>
     </div>`;
   }).join('');
-  return `<section class="card">
-    <div class="week-head"><span class="lbl">${label}</span><span class="muted">Week ${isoWeekNo(parseIso(wk))} · ${weekRange(wk)}</span>
+  return `<section class="card week">
+    <div class="week-head"><span class="lbl">${label === 'This week' ? '🗓️' : '🚀'} ${label}</span><span class="muted">Week ${isoWeekNo(parseIso(wk))} · ${weekRange(wk)}</span>
       <span class="spacer"></span>
       ${Store.canEdit ? `<button class="btn sm" data-action="goto-plan" data-week="${label === 'This week' ? 'current' : 'next'}">Edit</button>` : ''}</div>
     ${days}
@@ -320,6 +361,16 @@ function renderPlan() {
   const cards = DAYS.map((d, i) => {
     const day = getDay(db, wk, d.k);
     const r = day.recipeId && recipeById(db, day.recipeId);
+    if (isPast(wk, d.k)) {
+      const meal = !day.enabled ? '<span class="none">No dinner planned</span>'
+        : r ? `<button class="title-link" data-action="show-recipe" data-id="${r.id}">${esc(r.title)}</button> ${stars(r.rating)}`
+        : day.custom ? `<span class="custom">✏️ ${esc(day.custom)}</span>` : '<span class="none">Nothing planned</span>';
+      return `<section class="card pday past d-${d.k}">
+        <div class="row phead"><h3>${d.n}</h3><span class="muted small">${fmtShort(dayDate(wk, i))}</span><span class="spacer"></span><span class="chip gray">over</span></div>
+        <div class="sec">${meal}</div>
+        ${day.enabled ? `<div class="sec small">👥 ${peopleText(day.people)}${day.snacks ? `<div class="snacks">🥨 ${esc(day.snacks)}</div>` : ''}</div>` : ''}
+      </section>`;
+    }
     const nCand = candidates(db, wk, d.k).length;
     const sameWeek = weekRecipeIds(db, wk, d.k);
     let warn = '';
@@ -331,8 +382,8 @@ function renderPlan() {
       <button data-action="people" data-day="${d.k}" data-field="${field}" data-delta="-1" ${p[field] <= 0 ? 'disabled' : ''}>−</button>
       <span>${p[field]}</span>
       <button data-action="people" data-day="${d.k}" data-field="${field}" data-delta="1">+</button></span>`;
-    return `<section class="card pday ${day.enabled ? '' : 'off'}">
-      <div class="row"><h3>${d.n}</h3><span class="muted small">${fmtShort(dayDate(wk, i))}</span><span class="spacer"></span>
+    return `<section class="card pday d-${d.k} ${day.enabled ? '' : 'off'}">
+      <div class="row phead"><h3>${d.n}</h3><span class="muted small">${fmtShort(dayDate(wk, i))}</span><span class="spacer"></span>
         <label class="small row" style="gap:4px"><input type="checkbox" data-action="toggle-day" data-day="${d.k}" ${day.enabled ? 'checked' : ''}> Dinner</label></div>
       ${day.enabled ? `
       <div class="sec">
@@ -341,7 +392,7 @@ function renderPlan() {
           ${multiSelect(`f-${wk}-${d.k}`, 'Must have: any', db.tags, day.filter.tags, 'filter-tag', `data-day="${d.k}"`, 'Must have: ', 'inc')}
           ${multiSelect(`x-${wk}-${d.k}`, 'Exclude: none', db.tags, day.filter.excludeTags, 'filter-extag', `data-day="${d.k}"`, 'Exclude: ', 'exc')}
           <select data-action="min-rating" data-day="${d.k}" title="Minimum rating">
-            ${[0, 1, 2, 3, 4, 5].map(n => `<option value="${n}" ${day.filter.minRating === n ? 'selected' : ''}>${n ? '★'.repeat(n) + '+' : 'Any rating'}</option>`).join('')}
+            ${[0, 1, 2, 3].map(n => `<option value="${n}" ${day.filter.minRating === n ? 'selected' : ''}>${n ? '★'.repeat(n) + '+' : 'Any rating'}</option>`).join('')}
           </select>
         </div>
         <div class="small muted" style="margin-top:4px">${nCand} matching recipe${nCand === 1 ? '' : 's'} available</div>
@@ -375,7 +426,9 @@ function renderPlan() {
         <button data-action="plan-week" data-week="next" class="${state.planWeek === 'next' ? 'active' : ''}">Next week · ${weekRange(weekKey(1))}</button>
       </span>
       <span class="spacer"></span>
-      <button class="btn primary" data-action="go">Go — suggest dinners</button>
+      <label class="small row" style="gap:4px" title="3★ recipes are picked 3× as often as 1★ — unrated count as 2★">
+        <input type="checkbox" data-action="prefer-rated" ${db.settings.preferRated ? 'checked' : ''}> Prefer higher-rated</label>
+      <button class="btn primary" data-action="go" ${DAYS.every(d => isPast(wk, d.k)) ? 'disabled title="All days of this week are over"' : ''}>✨ Suggest dinners</button>
     </div>
     ${db.recipes.length ? '' : '<p class="card">No recipes yet. Add some in the <b>Recipes</b> tab first.</p>'}
     <div class="plan-grid">${cards}</div>
@@ -399,6 +452,7 @@ function renderRecipes() {
   list.sort(sorters[state.rSort] || sorters.title);
   const total = db.recipes.length, inactive = db.recipes.filter(r => r.active === false).length;
   const rows = list.map(r => `<div class="card rrow ${r.active === false ? 'inactive' : ''}">
+      <div class="avatar" style="--h:${hueOf(r.title)}" aria-hidden="true">${foodEmoji(r.title)}</div>
       <div class="main">
         <button class="title-link" data-action="show-recipe" data-id="${r.id}">${esc(r.title)}</button>
         ${r.active === false ? '<span class="chip gray">inactive</span>' : ''}
@@ -452,7 +506,8 @@ function showRecipe(id) {
   if (!r) return toast('Recipe not found (maybe deleted).');
   const last = lastPlanned(state.db, id);
   openModal(`<div class="form">
-    <div class="row"><h2 style="margin:0">${esc(r.title)}</h2>${r.active === false ? '<span class="chip gray">inactive</span>' : ''}</div>
+    <div class="row" style="gap:14px"><div class="avatar big" style="--h:${hueOf(r.title)}" aria-hidden="true">${foodEmoji(r.title)}</div>
+      <h2 style="margin:0;flex:1;min-width:0">${esc(r.title)}</h2>${r.active === false ? '<span class="chip gray">inactive</span>' : ''}</div>
     <div>${stars(r.rating)} ${(r.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>
     ${r.link ? `<div><a href="${esc(r.link)}" target="_blank" rel="noopener">Open recipe ↗</a><div class="small muted" style="word-break:break-all">${esc(r.link)}</div></div>` : ''}
     ${r.description ? `<div class="desc-full">${esc(r.description)}</div>` : '<div class="muted">No description.</div>'}
@@ -480,7 +535,7 @@ function renderEditor() {
     <label class="f">Link<input type="text" inputmode="url" name="link" value="${esc(d.link)}" placeholder="https://…" autocomplete="off"></label>
     <label class="f">Description<textarea name="description" rows="4">${esc(d.description)}</textarea></label>
     <div><div class="small muted" style="margin-bottom:4px">Rating</div>
-      <span class="star-in">${[1, 2, 3, 4, 5].map(n => `<button type="button" data-action="d-star" data-n="${n}" class="${n <= d.rating ? 'on' : ''}">★</button>`).join('')}</span>
+      <span class="star-in">${[1, 2, 3].map(n => `<button type="button" data-action="d-star" data-n="${n}" class="${n <= d.rating ? 'on' : ''}">★</button>`).join('')}</span>
       ${d.rating ? '<button type="button" class="btn sm" data-action="d-star" data-n="0">clear</button>' : ''}</div>
     <div><div class="small muted" style="margin-bottom:4px">Tags</div>
       <div class="tagboxes">${allTags.map(t => `<label><input type="checkbox" data-action="d-tag" data-value="${esc(t)}" ${d.tags.includes(t) ? 'checked' : ''}> ${esc(t)}</label>`).join('') || '<span class="muted small">No tags yet</span>'}</div>
@@ -526,7 +581,8 @@ function goSuggest() {
   const wk = planWk();
   const db = state.db;
   // Days with a free-text dinner are a deliberate choice: Go leaves them alone.
-  const open = d => getDay(db, wk, d.k).enabled && !getDay(db, wk, d.k).custom;
+  const open = d => !isPast(wk, d.k) && getDay(db, wk, d.k).enabled && !getDay(db, wk, d.k).custom;
+  if (DAYS.every(d => isPast(wk, d.k))) return toast('All days of this week are over.');
   const assigned = DAYS.filter(d => open(d) && getDay(db, wk, d.k).recipeId).length;
   if (assigned && !confirm(`Replace the ${assigned} dinner(s) already chosen for this week with new suggestions?`)) return;
   const missing = [];
@@ -640,6 +696,7 @@ document.addEventListener('change', e => {
       f.excludeTags = el.checked ? [...new Set([...(f.excludeTags || []), v])] : (f.excludeTags || []).filter(t => t !== v);
       if (el.checked) f.tags = f.tags.filter(t => t !== v);
     }, `Filter ${k} (${wk})`); break;
+    case 'prefer-rated': mutate(db => { db.settings.preferRated = el.checked; }, `${el.checked ? 'Prefer' : 'Do not prefer'} higher-rated recipes`); break;
     case 'min-rating': mutate(db => { ensureDay(db, wk, k).filter.minRating = Number(el.value); }, `Filter ${k} (${wk})`); break;
     case 'custom': {
       const v = el.value.trim();
