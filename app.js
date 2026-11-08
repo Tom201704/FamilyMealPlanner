@@ -16,7 +16,7 @@ const DEFAULT_PEOPLE = {
   tue: { adults: 2, kidsBig: 0, kidsSmall: 1 },
   wed: { adults: 2, kidsBig: 1, kidsSmall: 1 },
   thu: { adults: 2, kidsBig: 1, kidsSmall: 1 },
-  fri: { adults: 2, kidsBig: 0, kidsSmall: 0 },
+  fri: { adults: 2, kidsBig: 0, kidsSmall: 1 },
 };
 const MAX_STARS = 3;
 const DB_PATH = 'data/db.json';
@@ -67,7 +67,50 @@ const FOOD_EMOJI = [
   [/quiche|tart|wähe|pie|kuchen/i, '🥧'], [/fondue|raclette|cheese|käse/i, '🧀'], [/potato|kartoffel|rösti|gratin|mash|fries/i, '🥔'],
   [/sausage|wurst|bratwurst/i, '🌭'], [/vegetable|gemüse|veggie|ratatouille/i, '🥦'], [/couscous|bulgur|bowl/i, '🥣'],
 ];
-function foodEmoji(title) { for (const [re, e] of FOOD_EMOJI) if (re.test(title || '')) return e; return '🍽️'; }
+const SNACK_EMOJI = [
+  [/cookie|keks|guetzli|biscuit|biskuit/i, '🍪'], [/muffin|cupcake/i, '🧁'], [/cake|kuchen|torte|brownie/i, '🍰'],
+  [/donut|doughnut|berliner/i, '🍩'], [/chocolate|schoko|choco/i, '🍫'], [/ice ?cream|glace|\beis\b/i, '🍦'],
+  [/candy|bonbon|gumm|sweets|süss|lolli|marshmallow/i, '🍬'], [/pudding|creme|crème|flan/i, '🍮'], [/popcorn/i, '🍿'],
+  [/pretzel|brezel|salzstange/i, '🥨'], [/chip|crisp/i, '🍟'], [/cracker|reiswaffel|rice cake|zwieback/i, '🍘'],
+  [/smoothie|shake/i, '🥤'], [/yog|joghurt|quark/i, '🥛'],
+  [/banana|banane/i, '🍌'], [/apple|apfel|äpfel/i, '🍎'], [/grape|traube/i, '🍇'], [/berr|beere/i, '🍓'],
+  [/nut|nuss|nüss/i, '🥜'], [/cheese|käse/i, '🧀'],
+  [/fruit|frucht|früchte|obst/i, '🍉'], [/carrot|karotte|rüebli|cucumber|gurke|veg|gemüse/i, '🥕'],
+];
+// Groceries: English and German. Order matters (pineapple before apple, ice cream before cream …).
+const GROCERY_EMOJI = [
+  [/toilet|klopapier|wc-?papier/i, '🧻'], [/diaper|windel/i, '👶'], [/soap|seife|shampoo|dusch|lotion/i, '🧴'],
+  [/detergent|waschmittel|spülmittel|tabs|schwamm|sponge/i, '🧽'], [/tissue|taschentuch|kleenex/i, '🤧'], [/battery|batterie/i, '🔋'],
+  [/juice|saft/i, '🧃'], [/coffee|kaffee/i, '☕'], [/\btea\b|\btee\b/i, '🍵'], [/beer|bier/i, '🍺'], [/wine|wein/i, '🍷'],
+  [/ice ?cream|glace|\beis\b/i, '🍦'], [/watermelon|melon/i, '🍉'], [/water|wasser|mineral/i, '💧'],
+  [/buttermilk|milk|milch|lait/i, '🥛'], [/butter|beurre/i, '🧈'], [/eggplant|aubergine/i, '🍆'], [/\begg|\beier|œuf/i, '🥚'],
+  [/cheese|käse|fromage|mozzarella|parmesan|gruy|emmentaler|feta|raclette/i, '🧀'], [/yog|joghurt|quark/i, '🥛'],
+  [/cream|rahm|sahne/i, '🥛'], [/cereal|müesli|muesli|cornflakes|granola|oat|hafer/i, '🥣'],
+  [/bread|brot|bröt|pain|baguette|zopf|toast|gipfeli|croissant/i, '🍞'], [/pineapple|\bananas/i, '🍍'],
+  [/apple|apfel|äpfel|pomme/i, '🍎'], [/banana|banane/i, '🍌'], [/orange|clementine|mandarin/i, '🍊'],
+  [/lemon|zitrone|citron|lime/i, '🍋'], [/grape|traube/i, '🍇'], [/strawberr|erdbeer|fraise/i, '🍓'],
+  [/blueberr|heidelbeer|berr|beere/i, '🫐'], [/pear|birne/i, '🍐'], [/peach|pfirsich|nectarin|apricot|aprikose/i, '🍑'],
+  [/cherr|kirsch/i, '🍒'], [/kiwi/i, '🥝'], [/mango/i, '🥭'], [/avocado/i, '🥑'], [/tomat/i, '🍅'],
+  [/potato|kartoffel/i, '🥔'], [/carrot|karotte|rüebli|möhre/i, '🥕'], [/onion|zwiebel|oignon|leek|lauch/i, '🧅'],
+  [/garlic|knoblauch/i, '🧄'], [/salad|salat|lettuce|spinach|spinat/i, '🥬'], [/broccoli|brokkoli|cauliflower|blumenkohl/i, '🥦'],
+  [/cucumber|gurke|zucchin/i, '🥒'], [/chili/i, '🌶️'], [/pepper|paprika|peperoni/i, '🫑'], [/corn|mais/i, '🌽'],
+  [/mushroom|pilz|champignon/i, '🍄'], [/ginger|ingwer/i, '🫚'], [/herb|basil|kräuter|petersil|parsley/i, '🌿'],
+  [/chicken|poulet|huhn|hähnchen/i, '🍗'], [/bacon|speck/i, '🥓'], [/\bham\b|schinken/i, '🍖'],
+  [/sausage|wurst|würst|cervelat/i, '🌭'], [/beef|rind|steak|hack|mince|meat|fleisch|pork|schwein|veal|kalb/i, '🥩'],
+  [/fish|fisch|lachs|salmon|thon|tuna|cod/i, '🐟'], [/shrimp|crevette|garnele|prawn/i, '🦐'], [/tofu/i, '🧊'],
+  [/rice|reis|risotto/i, '🍚'], [/pasta|spaghetti|nudel|penne|teigwaren|fusilli|lasagn/i, '🍝'],
+  [/flour|mehl/i, '🌾'], [/sugar|zucker/i, '🍬'], [/salt|salz/i, '🧂'], [/\boil\b|\böl\b|olive/i, '🫒'],
+  [/honey|honig/i, '🍯'], [/jam|konfitüre|marmelade|nutella/i, '🍓'], [/chocolate|schoko/i, '🍫'],
+  [/cookie|keks|guetzli|biscuit/i, '🍪'], [/cake|kuchen/i, '🍰'], [/chip|crisp/i, '🍟'], [/nut|nuss|nüss|mandel|almond/i, '🥜'],
+  [/sauce|ketchup|mayo|senf|mustard/i, '🥫'], [/can\b|dose|bohnen|beans|lentil|linsen|kichererbs|chickpea/i, '🥫'],
+  [/frozen|tiefkühl|pizza/i, '🍕'], [/flower|blume/i, '💐'],
+];
+function emojiFrom(tables, text, fallback) { for (const t of tables) for (const [re, e] of t) if (re.test(text || '')) return e; return fallback; }
+function foodEmoji(title) { return emojiFrom([FOOD_EMOJI], title, '🍽️'); }
+function snackEmoji(title) { return emojiFrom([SNACK_EMOJI, GROCERY_EMOJI], title, '🍪'); }
+function groceryEmoji(name) { return emojiFrom([GROCERY_EMOJI, FOOD_EMOJI, SNACK_EMOJI], name, '🛒'); }
+const isSnack = r => r?.kind === 'snack';
+function emojiOf(r) { return isSnack(r) ? snackEmoji(r.title) : foodEmoji(r.title); }
 function hueOf(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
 function stars(n) {
@@ -80,10 +123,24 @@ function peopleText(p) {
   if (p.kidsSmall) parts.push(`${p.kidsSmall} small kid${p.kidsSmall === 1 ? '' : 's'}`);
   return parts.join(' · ');
 }
+const PEOPLE_FIELDS = ['adults', 'kidsBig', 'kidsSmall'];
+const peopleChanged = (k, p) => PEOPLE_FIELDS.some(f => (p[f] || 0) !== DEFAULT_PEOPLE[k][f]);
+// `past`: no highlight — the usual headcount may have changed since.
+function peopleLine(k, p, past = false) {
+  const chg = !past && peopleChanged(k, p);
+  return `<div class="dmeta ${chg ? 'chg' : ''}" ${chg ? `title="Usually: ${peopleText(DEFAULT_PEOPLE[k])}"` : ''}>👥 ${peopleText(p)}${chg ? ' <span class="chg-tag">changed</span>' : ''}</div>`;
+}
+// Snacks of a day: picked snack items (clickable) plus the free text.
+function snackLine(db, day) {
+  const items = (day.snackIds || []).map(id => recipeById(db, id)).filter(Boolean)
+    .map(s => `<button class="title-link" data-action="show-recipe" data-id="${s.id}">${esc(s.title)}</button>`);
+  if (day.snacks?.trim()) items.push(esc(day.snacks.trim()));
+  return items.length ? `<div class="snacks">🍪 ${items.join(', ')}</div>` : '';
+}
 
 // ---------------------------------------------------------------- data model
 function emptyDb() {
-  return { version: 1, tags: ["Tom doesn't like", 'Make ahead'], recipes: [], weeks: {} };
+  return { version: 1, ratingScale: MAX_STARS, defaultsVersion: 2, tags: ["Tom doesn't like", 'Make ahead'], recipes: [], weeks: {}, groceries: [], groceryRecent: [] };
 }
 function normalizeDb(db) {
   db = db && typeof db === 'object' ? db : emptyDb();
@@ -92,6 +149,18 @@ function normalizeDb(db) {
   db.recipes = Array.isArray(db.recipes) ? db.recipes : [];
   db.weeks = db.weeks && typeof db.weeks === 'object' ? db.weeks : {};
   db.settings = { preferRated: true, ...(db.settings || {}) };
+  db.groceries = Array.isArray(db.groceries) ? db.groceries : [];
+  db.groceryRecent = Array.isArray(db.groceryRecent) ? db.groceryRecent : [];
+  // Friday default gained the small kid. Upcoming Fridays that still carry the
+  // old default (2 adults, no kids) get it too; past Fridays stay as they were.
+  if ((db.defaultsVersion || 1) < 2) {
+    const today = isoDate(new Date());
+    Object.entries(db.weeks).forEach(([wk, w]) => {
+      const p = w.days?.fri?.people;
+      if (p && isoDate(dayDate(wk, 4)) >= today && p.adults === 2 && !p.kidsBig && !p.kidsSmall) p.kidsSmall = 1;
+    });
+    db.defaultsVersion = 2;
+  }
   // One-time conversion from the old 1–5 scale: ×3/5, rounded (1–2→1, 3–4→2, 5→3).
   // Deterministic and flagged, so every client converts identically and only once.
   if (db.ratingScale !== MAX_STARS) {
@@ -104,7 +173,7 @@ function normalizeDb(db) {
   return db;
 }
 function defaultDay(k) {
-  return { enabled: true, recipeId: null, custom: '', people: { ...DEFAULT_PEOPLE[k] }, snacks: '', filter: { tags: [], excludeTags: [], minRating: 0 } };
+  return { enabled: true, recipeId: null, custom: '', people: { ...DEFAULT_PEOPLE[k] }, snacks: '', snackIds: [], filter: { tags: [], excludeTags: [], minRating: 0 } };
 }
 // Read-only view of a day (does not create anything).
 function getDay(db, wk, k) {
@@ -131,7 +200,7 @@ function candidates(db, wk, k, extraExclude = []) {
   const day = getDay(db, wk, k);
   const ex = new Set([...neighbourIds(db, wk), ...weekRecipeIds(db, wk, k), ...extraExclude]);
   return db.recipes.filter(r =>
-    r.active !== false &&
+    r.active !== false && !isSnack(r) &&
     (r.rating || 0) >= (day.filter.minRating || 0) &&
     day.filter.tags.every(t => (r.tags || []).includes(t)) &&
     !day.filter.excludeTags.some(t => (r.tags || []).includes(t)) &&
@@ -152,7 +221,7 @@ function lastPlanned(db, id) {
   for (const [wk, w] of Object.entries(db.weeks)) {
     DAYS.forEach((d, i) => {
       const day = w.days?.[d.k];
-      if (day && day.enabled !== false && day.recipeId === id) {
+      if (day && day.enabled !== false && (day.recipeId === id || (day.snackIds || []).includes(id))) {
         const dt = isoDate(dayDate(wk, i));
         if (!last || dt > last) last = dt;
       }
@@ -256,7 +325,7 @@ const state = {
   tab: lsGet('dinnerplanner.tab', 'overview'),
   planWeek: 'next',             // 'current' | 'next'
   openMs: null,                 // id of open multi-select dropdown
-  rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: false,
+  rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: false, rKind: 'all',
   loadError: null,
 };
 
@@ -294,6 +363,20 @@ function recipeCombo(id, dayKey, recipes, selectedId, usedIds) {
       <div class="combo-empty muted small hidden" style="padding:6px">No recipe matches.</div>
     </div></details>`;
 }
+// Snack picker: searchable checkbox list of snack items (optional, next to the free text).
+function snackPicker(id, dayKey, snacks, selected) {
+  const names = selected.map(i => recipeById(state.db, i)?.title).filter(Boolean);
+  const items = snacks.map(s => `<label class="combo-item" data-q="${esc(s.title.toLowerCase())}">
+      <input type="checkbox" data-action="snack-pick" data-day="${dayKey}" data-id="${s.id}" ${selected.includes(s.id) ? 'checked' : ''}>
+      <span class="ct">${snackEmoji(s.title)} ${esc(s.title)}</span></label>`).join('');
+  return `<details class="ms combo snackpick ${names.length ? 'has' : ''}" data-ms="${esc(id)}" ${state.openMs === id ? 'open' : ''}>
+    <summary title="${esc(names.join(', '))}">${names.length ? '🍪 ' + esc(names.join(', ')) : 'Pick from snacks…'}</summary>
+    <div class="ms-pop">
+      <input type="search" class="combo-q" placeholder="Search ${snacks.length} snacks…" autocomplete="off">
+      <div class="combo-list">${items}</div>
+      <div class="combo-empty muted small hidden" style="padding:6px">No snack matches.</div>
+    </div></details>`;
+}
 function filterCombo(input) {
   const pop = input.closest('.ms-pop');
   const q = input.value.trim().toLowerCase();
@@ -316,7 +399,9 @@ function render() {
       : '';
   document.body.classList.toggle('readonly', !Store.canEdit);
   const app = $('#app');
-  app.innerHTML = ({ overview: renderOverview, plan: renderPlan, recipes: renderRecipes, settings: renderSettings }[state.tab] || renderOverview)();
+  const n = state.db.groceries.length;
+  const gc = $('#gcount'); if (gc) { gc.textContent = n || ''; gc.classList.toggle('hidden', !n); }
+  app.innerHTML = ({ overview: renderOverview, plan: renderPlan, recipes: renderRecipes, groceries: renderGroceries, settings: renderSettings }[state.tab] || renderOverview)();
 }
 
 function renderWeekCard(wk, label) {
@@ -336,8 +421,8 @@ function renderWeekCard(wk, label) {
       <div class="dbody">
         ${isToday ? '<span class="today-pill">Today</span>' : ''}
         ${meal}
-        ${day.enabled ? `<div class="dmeta">👥 ${peopleText(day.people)}</div>` : ''}
-        ${day.enabled && day.snacks ? `<div class="snacks">🥨 ${esc(day.snacks)}</div>` : ''}
+        ${day.enabled ? peopleLine(d.k, day.people, isoDate(date) < today) : ''}
+        ${day.enabled ? snackLine(state.db, day) : ''}
       </div>
       <div class="demoji" aria-hidden="true">${emoji}</div>
     </div>`;
@@ -356,7 +441,8 @@ function renderOverview() {
 function renderPlan() {
   const wk = weekKey(state.planWeek === 'next' ? 1 : 0);
   const db = state.db;
-  const active = db.recipes.filter(r => r.active !== false).sort((a, b) => a.title.localeCompare(b.title));
+  const byTitle = (a, b) => a.title.localeCompare(b.title);
+  const active = db.recipes.filter(r => r.active !== false && !isSnack(r)).sort(byTitle);
   const neigh = neighbourIds(db, wk);
   const cards = DAYS.map((d, i) => {
     const day = getDay(db, wk, d.k);
@@ -368,7 +454,7 @@ function renderPlan() {
       return `<section class="card pday past d-${d.k}">
         <div class="row phead"><h3>${d.n}</h3><span class="muted small">${fmtShort(dayDate(wk, i))}</span><span class="spacer"></span><span class="chip gray">over</span></div>
         <div class="sec">${meal}</div>
-        ${day.enabled ? `<div class="sec small">👥 ${peopleText(day.people)}${day.snacks ? `<div class="snacks">🥨 ${esc(day.snacks)}</div>` : ''}</div>` : ''}
+        ${day.enabled ? `<div class="sec small">${peopleLine(d.k, day.people, true)}${snackLine(db, day)}</div>` : ''}
       </section>`;
     }
     const nCand = candidates(db, wk, d.k).length;
@@ -377,11 +463,16 @@ function renderPlan() {
     if (r && neigh.has(r.id)) warn = `<div class="warn">⚠ Also planned in the ${state.planWeek === 'next' ? 'current' : 'next'} week</div>`;
     else if (r && sameWeek.includes(r.id)) warn = `<div class="warn">⚠ Already planned on another day this week</div>`;
     if (r && r.active === false) warn += `<div class="warn">⚠ Recipe is inactive</div>`;
-    const p = day.people;
-    const step = (field, label) => `<span>${label}</span><span class="stepper">
+    if (isSnack(r)) warn += `<div class="warn">⚠ This is a snack, not a dinner recipe</div>`;
+    const p = day.people, pChg = peopleChanged(d.k, p);
+    const step = (field, label) => {
+      const def = DEFAULT_PEOPLE[d.k][field], chg = p[field] !== def;
+      return `<span class="${chg ? 'chg' : ''}">${label}${chg ? ` <span class="usual">usually ${def}</span>` : ''}</span><span class="stepper ${chg ? 'chg' : ''}">
       <button data-action="people" data-day="${d.k}" data-field="${field}" data-delta="-1" ${p[field] <= 0 ? 'disabled' : ''}>−</button>
       <span>${p[field]}</span>
       <button data-action="people" data-day="${d.k}" data-field="${field}" data-delta="1">+</button></span>`;
+    };
+    const snacks = db.recipes.filter(x => isSnack(x) && (x.active !== false || day.snackIds.includes(x.id))).sort(byTitle);
     return `<section class="card pday d-${d.k} ${day.enabled ? '' : 'off'}">
       <div class="row phead"><h3>${d.n}</h3><span class="muted small">${fmtShort(dayDate(wk, i))}</span><span class="spacer"></span>
         <label class="small row" style="gap:4px"><input type="checkbox" data-action="toggle-day" data-day="${d.k}" ${day.enabled ? 'checked' : ''}> Dinner</label></div>
@@ -411,11 +502,12 @@ function renderPlan() {
           placeholder="…or write your own" title="e.g. “Something with the chicken” — kept when you press Go">
       </div>
       <div class="sec">
-        <span class="lab">People</span>
+        <span class="lab">People ${pChg ? `<button class="link-btn" data-action="people-reset" data-day="${d.k}" title="Back to: ${peopleText(DEFAULT_PEOPLE[d.k])}">↺ usual</button>` : ''}</span>
         <div class="people">${step('adults', 'Adults')}${step('kidsBig', 'Big kids')}${step('kidsSmall', 'Small kids')}</div>
       </div>
       <div class="sec">
         <span class="lab">Snacks (optional)</span>
+        ${snacks.length ? snackPicker(`s-${wk}-${d.k}`, d.k, snacks, day.snackIds) : ''}
         <textarea rows="2" data-action="snacks" data-day="${d.k}" placeholder="e.g. apple slices, crackers">${esc(day.snacks)}</textarea>
       </div>` : '<div class="sec muted small">No dinner needed on this day.</div>'}
     </section>`;
@@ -437,7 +529,7 @@ function renderPlan() {
 
 function renderRecipes() {
   const db = state.db;
-  let list = db.recipes.filter(r => state.rInactive || r.active !== false);
+  let list = db.recipes.filter(r => (state.rInactive || r.active !== false) && (state.rKind === 'all' || (state.rKind === 'snack') === isSnack(r)));
   const q = state.rq.trim().toLowerCase();
   if (q) list = list.filter(r => (r.title + ' ' + (r.description || '')).toLowerCase().includes(q));
   if (state.rTags.length) list = list.filter(r => state.rTags.every(t => (r.tags || []).includes(t)));
@@ -451,19 +543,29 @@ function renderRecipes() {
   };
   list.sort(sorters[state.rSort] || sorters.title);
   const total = db.recipes.length, inactive = db.recipes.filter(r => r.active === false).length;
-  const rows = list.map(r => `<div class="card rrow ${r.active === false ? 'inactive' : ''}">
-      <div class="avatar" style="--h:${hueOf(r.title)}" aria-hidden="true">${foodEmoji(r.title)}</div>
+  const nSnack = db.recipes.filter(isSnack).length;
+  // The whole tile opens the editor (the link inside still opens the recipe page).
+  const rows = list.map(r => `<div class="card rrow ${isSnack(r) ? 'snack' : ''} ${r.active === false ? 'inactive' : ''}"
+      ${Store.canEdit ? `data-action="edit-recipe" data-id="${r.id}" tabindex="0" role="button" title="Edit"` : ''}>
+      <div class="avatar" style="--h:${hueOf(r.title)}" aria-hidden="true">${emojiOf(r)}</div>
       <div class="main">
-        <button class="title-link" data-action="show-recipe" data-id="${r.id}">${esc(r.title)}</button>
+        <span class="rtitle">${esc(r.title)}</span>
+        ${isSnack(r) ? '<span class="chip snack">Snack</span>' : ''}
         ${r.active === false ? '<span class="chip gray">inactive</span>' : ''}
         ${r.link ? ` <a href="${esc(r.link)}" target="_blank" rel="noopener" class="small">link ↗</a>` : ''}
         <div class="desc">${esc(r.description || '')}</div>
         <div>${(r.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>
       </div>
       ${stars(r.rating)}
-      ${Store.canEdit ? `<button class="btn sm" data-action="edit-recipe" data-id="${r.id}">Edit</button>` : ''}
     </div>`).join('');
-  return `<div class="row" style="margin-bottom:12px">
+  const kindBtn = (k, l) => `<button data-action="rkind" data-kind="${k}" class="${state.rKind === k ? 'active' : ''}">${l}</button>`;
+  return `<div class="row" style="margin-bottom:10px">
+      <span class="seg">${kindBtn('all', `All · ${total}`)}${kindBtn('dinner', `🍽️ Dinners · ${total - nSnack}`)}${kindBtn('snack', `🍪 Snacks · ${nSnack}`)}</span>
+      <span class="spacer"></span>
+      ${Store.canEdit ? `<button class="btn" data-action="new-recipe" data-kind="snack">+ Add snack</button>
+      <button class="btn primary" data-action="new-recipe" data-kind="dinner">+ Add recipe</button>` : ''}
+    </div>
+    <div class="row" style="margin-bottom:12px">
       <input type="search" id="rq" placeholder="Search recipes" value="${esc(state.rq)}">
       ${multiSelect('rtags', 'Must have: any', db.tags, state.rTags, 'rtag', '', 'Must have: ', 'inc')}
       ${multiSelect('rxtags', 'Exclude: none', db.tags, state.rExTags, 'rxtag', '', 'Exclude: ', 'exc')}
@@ -472,11 +574,30 @@ function renderRecipes() {
           .map(([v, l]) => `<option value="${v}" ${state.rSort === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select>
       <label class="small row" style="gap:4px"><input type="checkbox" data-action="rinactive" ${state.rInactive ? 'checked' : ''}> Show inactive (${inactive})</label>
-      <span class="spacer"></span>
-      ${Store.canEdit ? '<button class="btn primary" data-action="new-recipe">+ Add recipe</button>' : ''}
     </div>
-    <p class="small muted">${list.length} of ${total} recipes</p>
+    <p class="small muted">${list.length} of ${total} shown · tap a tile to edit it</p>
     <div class="rlist">${rows || '<p class="muted">No recipes match.</p>'}</div>`;
+}
+
+function renderGroceries() {
+  const db = state.db;
+  const onList = new Set(db.groceries.map(x => x.name.toLowerCase()));
+  const recent = db.groceryRecent.filter(n => !onList.has(n.toLowerCase()));
+  const tile = (x, action, data) => `<button class="gtile" data-action="${action}" ${data} style="--h:${hueOf(x)}">
+      <span class="ge" aria-hidden="true">${groceryEmoji(x)}</span><span class="gn">${esc(x)}</span></button>`;
+  return `<div class="groc">
+    <form class="card gadd" id="gform">
+      <input type="text" id="gname" placeholder="Add something, e.g. Milk, Eggs, Bananas" autocomplete="off" enterkeyhint="done">
+      <button class="btn primary" type="submit">Add</button>
+    </form>
+    <div class="ghead"><h2>🛒 To buy${db.groceries.length ? ` <span class="count">${db.groceries.length}</span>` : ''}</h2>
+      <span class="muted small">Tap an item once it's in the cart.</span></div>
+    ${db.groceries.length ? `<div class="gtiles">${db.groceries.map(x => tile(x.name, 'g-done', `data-id="${x.id}"`)).join('')}</div>`
+      : '<div class="card gempty">🎉 Nothing left to buy.</div>'}
+    ${recent.length ? `<div class="ghead"><h3>Recently bought</h3><span class="muted small">Tap to put it back on the list.</span>
+        <span class="spacer"></span><button class="btn sm" data-action="g-clear-recent">Clear</button></div>
+      <div class="gtiles recent">${recent.map(n => tile(n, 'g-readd', `data-name="${esc(n)}"`)).join('')}</div>` : ''}
+  </div>`;
 }
 
 function renderSettings() {
@@ -506,8 +627,8 @@ function showRecipe(id) {
   if (!r) return toast('Recipe not found (maybe deleted).');
   const last = lastPlanned(state.db, id);
   openModal(`<div class="form">
-    <div class="row" style="gap:14px"><div class="avatar big" style="--h:${hueOf(r.title)}" aria-hidden="true">${foodEmoji(r.title)}</div>
-      <h2 style="margin:0;flex:1;min-width:0">${esc(r.title)}</h2>${r.active === false ? '<span class="chip gray">inactive</span>' : ''}</div>
+    <div class="row" style="gap:14px"><div class="avatar big" style="--h:${hueOf(r.title)}" aria-hidden="true">${emojiOf(r)}</div>
+      <h2 style="margin:0;flex:1;min-width:0">${esc(r.title)}</h2>${isSnack(r) ? '<span class="chip snack">Snack</span>' : ''}${r.active === false ? '<span class="chip gray">inactive</span>' : ''}</div>
     <div>${stars(r.rating)} ${(r.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>
     ${r.link ? `<div><a href="${esc(r.link)}" target="_blank" rel="noopener">Open recipe ↗</a><div class="small muted" style="word-break:break-all">${esc(r.link)}</div></div>` : ''}
     ${r.description ? `<div class="desc-full">${esc(r.description)}</div>` : '<div class="muted">No description.</div>'}
@@ -519,9 +640,10 @@ function showRecipe(id) {
 }
 
 let draft = null, draftOrig = ''; // recipe being edited
-function editRecipe(id) {
+function editRecipe(id, kind) {
   const r = id ? recipeById(state.db, id) : null;
   draft = r ? clone(r) : { id: null, title: '', link: '', description: '', tags: [], rating: 0, active: true };
+  draft.kind = r ? (r.kind || 'dinner') : (kind || 'dinner');
   draftOrig = JSON.stringify(draft);
   renderEditor();
   $('#rform [name=title]').focus();
@@ -530,7 +652,11 @@ function renderEditor() {
   const d = draft;
   const allTags = [...new Set([...state.db.tags, ...d.tags])];
   openModal(`<form class="form" id="rform">
-    <h2 style="margin:0">${d.id ? 'Edit recipe' : 'New recipe'}</h2>
+    <h2 style="margin:0">${d.id ? 'Edit' : 'New'} ${d.kind === 'snack' ? 'snack' : 'recipe'}</h2>
+    <div><span class="seg kind">
+        <button type="button" data-action="d-kind" data-kind="dinner" class="${d.kind !== 'snack' ? 'active' : ''}">🍽️ Dinner recipe</button>
+        <button type="button" data-action="d-kind" data-kind="snack" class="${d.kind === 'snack' ? 'active' : ''}">🍪 Snack / Sweets</button></span>
+      <div class="small muted" style="margin-top:4px">${d.kind === 'snack' ? 'Snacks are never suggested for dinner — pick them in the snack field of a day.' : 'Dinner recipes are used for the suggestions.'}</div></div>
     <label class="f">Title *<input type="text" name="title" value="${esc(d.title)}" required></label>
     <label class="f">Link<input type="text" inputmode="url" name="link" value="${esc(d.link)}" placeholder="https://…" autocomplete="off"></label>
     <label class="f">Description<textarea name="description" rows="4">${esc(d.description)}</textarea></label>
@@ -541,7 +667,9 @@ function renderEditor() {
       <div class="tagboxes">${allTags.map(t => `<label><input type="checkbox" data-action="d-tag" data-value="${esc(t)}" ${d.tags.includes(t) ? 'checked' : ''}> ${esc(t)}</label>`).join('') || '<span class="muted small">No tags yet</span>'}</div>
       <div class="row" style="margin-top:6px"><input type="text" id="d-newtag" placeholder="New tag"><button type="button" class="btn sm" data-action="d-addtag">Add</button></div></div>
     <label class="small row" style="gap:6px"><input type="checkbox" name="active" ${d.active !== false ? 'checked' : ''}> Active (inactive recipes are never suggested)</label>
-    <div class="row"><span class="spacer"></span>
+    <div class="row">
+      ${d.id ? '<button type="button" class="btn danger" data-action="delete-recipe">🗑 Delete</button>' : ''}
+      <span class="spacer"></span>
       <button type="button" class="btn" data-action="close">Cancel</button>
       <button type="submit" class="btn primary">Save</button></div>
   </form>`);
@@ -573,6 +701,42 @@ function saveDraft() {
     if (i >= 0) db.recipes[i] = { ...db.recipes[i], ...d }; else db.recipes.push(d);
   }, `${isNew ? 'Add' : 'Edit'} recipe: ${d.title}`);
   closeModal();
+}
+
+// Remove a recipe for good. Days that had it keep its name as free text,
+// so the history in the overview still reads correctly.
+function deleteRecipe(db, id, title) {
+  db.recipes = db.recipes.filter(r => r.id !== id);
+  Object.values(db.weeks).forEach(w => Object.values(w.days || {}).forEach(d => {
+    if (d.recipeId === id) { d.recipeId = null; if (!d.custom) d.custom = title; }
+    if ((d.snackIds || []).includes(id)) {
+      d.snackIds = d.snackIds.filter(x => x !== id);
+      d.snacks = d.snacks?.trim() ? `${d.snacks.trim()}, ${title}` : title;
+    }
+  }));
+}
+
+// ---------------------------------------------------------------- groceries
+function addGrocery(text) {
+  const names = text.split(/[,;\n]/).map(x => x.trim()).filter(Boolean).map(x => x.charAt(0).toUpperCase() + x.slice(1));
+  const input = $('#gname');
+  if (!names.length) { input?.focus(); return; }
+  const have = new Set(state.db.groceries.map(x => x.name.toLowerCase()));
+  const add = [], dup = [];
+  names.forEach(n => { const l = n.toLowerCase(); if (have.has(l)) dup.push(n); else { have.add(l); add.push({ id: uid(), name: n, added: new Date().toISOString() }); } });
+  if (dup.length) toast(`Already on the list: ${dup.join(', ')}`);
+  if (add.length) mutate(db => {
+    add.forEach(x => { if (!db.groceries.some(y => y.name.toLowerCase() === x.name.toLowerCase())) db.groceries.push(x); });
+  }, `Groceries: add ${add.map(x => x.name).join(', ')}`);
+  const i = $('#gname'); if (i) { i.value = ''; i.focus(); }
+}
+function groceryDone(id) {
+  const item = state.db.groceries.find(x => x.id === id);
+  if (!item) return;
+  mutate(db => {
+    db.groceries = db.groceries.filter(x => x.id !== id);
+    db.groceryRecent = [item.name, ...db.groceryRecent.filter(n => n.toLowerCase() !== item.name.toLowerCase())].slice(0, 30);
+  }, `Groceries: bought ${item.name}`);
 }
 
 // ---------------------------------------------------------------- planner actions
@@ -617,13 +781,35 @@ document.addEventListener('click', e => {
   const ms = e.target.closest('details.ms');
   document.querySelectorAll('details.ms[open]').forEach(d => { if (d !== ms) d.open = false; });
 
+  if (e.target.closest('a[href]')) return; // links (e.g. inside a recipe tile) just open
   const el = e.target.closest('[data-action]');
   if (!el || el.tagName === 'SELECT' || (el.tagName === 'INPUT') || el.tagName === 'TEXTAREA') return;
   const a = el.dataset.action, k = el.dataset.day, wk = planWk();
   switch (a) {
     case 'show-recipe': showRecipe(el.dataset.id); break;
     case 'edit-recipe': editRecipe(el.dataset.id); break;
-    case 'new-recipe': editRecipe(null); break;
+    case 'new-recipe': editRecipe(null, el.dataset.kind); break;
+    case 'rkind': state.rKind = el.dataset.kind; render(); break;
+    case 'd-kind': syncDraftFields(); draft.kind = el.dataset.kind; renderEditor(); break;
+    case 'delete-recipe': {
+      const r = recipeById(state.db, draft?.id);
+      if (!r) { closeModal(); break; }
+      if (!confirm(`Delete "${r.title}" for good?\n\nDays that already have it planned keep the name as text. To just stop it being suggested, untick "Active" instead.`)) return;
+      const id = r.id, title = r.title;
+      closeModal();
+      mutate(db => deleteRecipe(db, id, title), `Delete recipe: ${title}`);
+      toast(`Deleted "${title}"`);
+      break;
+    }
+    case 'people-reset': mutate(db => { ensureDay(db, wk, k).people = { ...DEFAULT_PEOPLE[k] }; }, `People ${k} (${wk}): back to usual`); break;
+    case 'g-done': {
+      el.classList.add('gone');
+      const id = el.dataset.id;
+      setTimeout(() => groceryDone(id), 220);
+      break;
+    }
+    case 'g-readd': addGrocery(el.dataset.name); break;
+    case 'g-clear-recent': mutate(db => { db.groceryRecent = []; }, 'Groceries: clear recently bought'); break;
     case 'close': closeModal(); break;
     case 'goto-plan': state.tab = 'plan'; state.planWeek = el.dataset.week; render(); break;
     case 'plan-week': state.planWeek = el.dataset.week; state.openMs = null; render(); break;
@@ -703,6 +889,10 @@ document.addEventListener('change', e => {
       mutate(db => { const day = ensureDay(db, wk, k); day.custom = v; if (v) day.recipeId = null; }, `Free-text dinner ${k} (${wk})`);
       break;
     }
+    case 'snack-pick': keepOpen(); mutate(db => {
+      const day = ensureDay(db, wk, k), id = el.dataset.id;
+      day.snackIds = el.checked ? [...new Set([...(day.snackIds || []), id])] : (day.snackIds || []).filter(x => x !== id);
+    }, `Snacks ${k} (${wk})`); break;
     case 'snacks': { const v = el.value; mutate(db => { ensureDay(db, wk, k).snacks = v; }, `Snacks ${k} (${wk})`); break; }
     case 'rtag': keepOpen(); state.rTags = el.checked ? [...state.rTags, el.dataset.value] : state.rTags.filter(t => t !== el.dataset.value);
       if (el.checked) state.rExTags = state.rExTags.filter(t => t !== el.dataset.value); render(); break;
@@ -717,14 +907,23 @@ document.addEventListener('keydown', e => {
   if (!e.target.classList?.contains('combo-q')) return;
   const visible = [...e.target.closest('.ms-pop').querySelectorAll('.combo-item:not(.hidden)')];
   if (e.key === 'Enter') { e.preventDefault(); visible[0]?.click(); }
-  else if (e.key === 'ArrowDown') { e.preventDefault(); visible[0]?.focus(); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); focusItem(visible[0]); }
 });
+const focusItem = el => el && (el.matches('label') ? el.querySelector('input') : el).focus();
 document.addEventListener('keydown', e => {
-  if (!e.target.classList?.contains('combo-item') || !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
+  const item = e.target.closest?.('.combo-item');
+  if (!item || !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
   e.preventDefault();
-  const visible = [...e.target.closest('.combo-list').querySelectorAll('.combo-item:not(.hidden)')];
-  const i = visible.indexOf(e.target) + (e.key === 'ArrowDown' ? 1 : -1);
-  if (i < 0) e.target.closest('.ms-pop').querySelector('.combo-q').focus(); else visible[i]?.focus();
+  const visible = [...item.closest('.combo-list').querySelectorAll('.combo-item:not(.hidden)')];
+  const i = visible.indexOf(item) + (e.key === 'ArrowDown' ? 1 : -1);
+  if (i < 0) item.closest('.ms-pop').querySelector('.combo-q').focus(); else focusItem(visible[i]);
+});
+// Recipe tiles act as buttons: Enter / Space opens the editor.
+document.addEventListener('keydown', e => {
+  if (e.target.classList?.contains('rrow') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); }
+});
+document.addEventListener('submit', e => {
+  if (e.target.id === 'gform') { e.preventDefault(); addGrocery($('#gname').value); }
 });
 document.addEventListener('input', e => {
   if (e.target.classList.contains('combo-q')) { filterCombo(e.target); return; }
