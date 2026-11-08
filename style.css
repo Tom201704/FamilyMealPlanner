@@ -129,6 +129,9 @@ details.ms .ms-pop {
 details.ms label { display: flex; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
 details.ms label:hover { background: var(--bg); }
 
+details.ms.inc.has > summary { border-color: var(--ok); color: var(--ok); }
+details.ms.exc.has > summary { border-color: #b3261e; color: #b3261e; }
+
 /* searchable recipe dropdown */
 details.combo { display: block; }
 details.combo > summary { max-width: none; color: var(--muted); }

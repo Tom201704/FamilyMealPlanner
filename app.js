@@ -66,7 +66,7 @@ function peopleText(p) {
 
 // ---------------------------------------------------------------- data model
 function emptyDb() {
-  return { version: 1, tags: ['Tom likes', 'Make ahead'], recipes: [], weeks: {} };
+  return { version: 1, tags: ["Tom doesn't like", 'Make ahead'], recipes: [], weeks: {} };
 }
 function normalizeDb(db) {
   db = db && typeof db === 'object' ? db : emptyDb();
@@ -77,12 +77,12 @@ function normalizeDb(db) {
   return db;
 }
 function defaultDay(k) {
-  return { enabled: true, recipeId: null, custom: '', people: { ...DEFAULT_PEOPLE[k] }, snacks: '', filter: { tags: [], minRating: 0 } };
+  return { enabled: true, recipeId: null, custom: '', people: { ...DEFAULT_PEOPLE[k] }, snacks: '', filter: { tags: [], excludeTags: [], minRating: 0 } };
 }
 // Read-only view of a day (does not create anything).
 function getDay(db, wk, k) {
   const d = db.weeks[wk]?.days?.[k];
-  return d ? { ...defaultDay(k), ...d, people: { ...DEFAULT_PEOPLE[k], ...(d.people || {}) }, filter: { tags: [], minRating: 0, ...(d.filter || {}) } } : defaultDay(k);
+  return d ? { ...defaultDay(k), ...d, people: { ...DEFAULT_PEOPLE[k], ...(d.people || {}) }, filter: { tags: [], excludeTags: [], minRating: 0, ...(d.filter || {}) } } : defaultDay(k);
 }
 // Mutable day inside a mutation (creates the week/day if missing).
 function ensureDay(db, wk, k) {
@@ -107,6 +107,7 @@ function candidates(db, wk, k, extraExclude = []) {
     r.active !== false &&
     (r.rating || 0) >= (day.filter.minRating || 0) &&
     day.filter.tags.every(t => (r.tags || []).includes(t)) &&
+    !day.filter.excludeTags.some(t => (r.tags || []).includes(t)) &&
     !ex.has(r.id));
 }
 const pickRandom = arr => arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
@@ -219,7 +220,7 @@ const state = {
   tab: lsGet('dinnerplanner.tab', 'overview'),
   planWeek: 'next',             // 'current' | 'next'
   openMs: null,                 // id of open multi-select dropdown
-  rq: '', rTags: [], rSort: 'title', rInactive: false,
+  rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: false,
   loadError: null,
 };
 
@@ -231,9 +232,9 @@ function toast(msg, ms = 3500) {
 }
 
 // Multi-select dropdown with checkboxes. `id` keeps it open across re-renders.
-function multiSelect(id, label, options, selected, action, extra = '') {
-  const sum = selected.length ? selected.join(', ') : label;
-  return `<details class="ms" data-ms="${esc(id)}" ${state.openMs === id ? 'open' : ''}>
+function multiSelect(id, label, options, selected, action, extra = '', prefix = '', cls = '') {
+  const sum = selected.length ? prefix + selected.join(', ') : label;
+  return `<details class="ms ${cls} ${selected.length ? 'has' : ''}" data-ms="${esc(id)}" ${state.openMs === id ? 'open' : ''}>
     <summary title="${esc(sum)}">${esc(sum)}</summary>
     <div class="ms-pop">
       ${options.length ? options.map(o => `<label><input type="checkbox" data-action="${action}" data-value="${esc(o)}" ${extra} ${selected.includes(o) ? 'checked' : ''}> ${esc(o)}</label>`).join('') : '<div class="muted small" style="padding:4px 6px">No tags yet</div>'}
@@ -337,7 +338,8 @@ function renderPlan() {
       <div class="sec">
         <span class="lab">Narrow the choice</span>
         <div class="row">
-          ${multiSelect(`f-${wk}-${d.k}`, 'Any tag', db.tags, day.filter.tags, 'filter-tag', `data-day="${d.k}"`)}
+          ${multiSelect(`f-${wk}-${d.k}`, 'Must have: any', db.tags, day.filter.tags, 'filter-tag', `data-day="${d.k}"`, 'Must have: ', 'inc')}
+          ${multiSelect(`x-${wk}-${d.k}`, 'Exclude: none', db.tags, day.filter.excludeTags, 'filter-extag', `data-day="${d.k}"`, 'Exclude: ', 'exc')}
           <select data-action="min-rating" data-day="${d.k}" title="Minimum rating">
             ${[0, 1, 2, 3, 4, 5].map(n => `<option value="${n}" ${day.filter.minRating === n ? 'selected' : ''}>${n ? '★'.repeat(n) + '+' : 'Any rating'}</option>`).join('')}
           </select>
@@ -386,6 +388,7 @@ function renderRecipes() {
   const q = state.rq.trim().toLowerCase();
   if (q) list = list.filter(r => (r.title + ' ' + (r.description || '')).toLowerCase().includes(q));
   if (state.rTags.length) list = list.filter(r => state.rTags.every(t => (r.tags || []).includes(t)));
+  if (state.rExTags.length) list = list.filter(r => !state.rExTags.some(t => (r.tags || []).includes(t)));
   const sorters = {
     title: (a, b) => a.title.localeCompare(b.title),
     rating: (a, b) => (b.rating || 0) - (a.rating || 0) || a.title.localeCompare(b.title),
@@ -408,7 +411,8 @@ function renderRecipes() {
     </div>`).join('');
   return `<div class="row" style="margin-bottom:12px">
       <input type="search" id="rq" placeholder="Search recipes" value="${esc(state.rq)}">
-      ${multiSelect('rtags', 'Filter by tag', db.tags, state.rTags, 'rtag')}
+      ${multiSelect('rtags', 'Must have: any', db.tags, state.rTags, 'rtag', '', 'Must have: ', 'inc')}
+      ${multiSelect('rxtags', 'Exclude: none', db.tags, state.rExTags, 'rxtag', '', 'Exclude: ', 'exc')}
       <select data-action="rsort">
         ${[['title', 'Sort: Title A–Z'], ['rating', 'Sort: Rating'], ['tags', 'Sort: Tags'], ['added', 'Sort: Newest'], ['edited', 'Sort: Recently edited']]
           .map(([v, l]) => `<option value="${v}" ${state.rSort === v ? 'selected' : ''}>${l}</option>`).join('')}
@@ -617,7 +621,7 @@ function renameTag(db, old, nu) {
   const fix = arr => { const out = arr.map(t => t === old ? nu : t).filter(Boolean); return [...new Set(out)]; };
   db.tags = fix(db.tags);
   db.recipes.forEach(r => { r.tags = fix(r.tags || []); });
-  Object.values(db.weeks).forEach(w => Object.values(w.days || {}).forEach(d => { if (d.filter?.tags) d.filter.tags = fix(d.filter.tags); }));
+  Object.values(db.weeks).forEach(w => Object.values(w.days || {}).forEach(d => { if (d.filter?.tags) d.filter.tags = fix(d.filter.tags); if (d.filter?.excludeTags) d.filter.excludeTags = fix(d.filter.excludeTags); }));
 }
 
 document.addEventListener('change', e => {
@@ -629,6 +633,12 @@ document.addEventListener('change', e => {
     case 'filter-tag': keepOpen(); mutate(db => {
       const f = ensureDay(db, wk, k).filter; const v = el.dataset.value;
       f.tags = el.checked ? [...new Set([...f.tags, v])] : f.tags.filter(t => t !== v);
+      if (el.checked) f.excludeTags = (f.excludeTags || []).filter(t => t !== v);
+    }, `Filter ${k} (${wk})`); break;
+    case 'filter-extag': keepOpen(); mutate(db => {
+      const f = ensureDay(db, wk, k).filter; const v = el.dataset.value;
+      f.excludeTags = el.checked ? [...new Set([...(f.excludeTags || []), v])] : (f.excludeTags || []).filter(t => t !== v);
+      if (el.checked) f.tags = f.tags.filter(t => t !== v);
     }, `Filter ${k} (${wk})`); break;
     case 'min-rating': mutate(db => { ensureDay(db, wk, k).filter.minRating = Number(el.value); }, `Filter ${k} (${wk})`); break;
     case 'custom': {
@@ -637,7 +647,10 @@ document.addEventListener('change', e => {
       break;
     }
     case 'snacks': { const v = el.value; mutate(db => { ensureDay(db, wk, k).snacks = v; }, `Snacks ${k} (${wk})`); break; }
-    case 'rtag': keepOpen(); state.rTags = el.checked ? [...state.rTags, el.dataset.value] : state.rTags.filter(t => t !== el.dataset.value); render(); break;
+    case 'rtag': keepOpen(); state.rTags = el.checked ? [...state.rTags, el.dataset.value] : state.rTags.filter(t => t !== el.dataset.value);
+      if (el.checked) state.rExTags = state.rExTags.filter(t => t !== el.dataset.value); render(); break;
+    case 'rxtag': keepOpen(); state.rExTags = el.checked ? [...state.rExTags, el.dataset.value] : state.rExTags.filter(t => t !== el.dataset.value);
+      if (el.checked) state.rTags = state.rTags.filter(t => t !== el.dataset.value); render(); break;
     case 'rsort': state.rSort = el.value; render(); break;
     case 'rinactive': state.rInactive = el.checked; render(); break;
     case 'd-tag': syncDraftFields(); draft.tags = el.checked ? [...draft.tags, el.dataset.value] : draft.tags.filter(t => t !== el.dataset.value); break;
