@@ -154,6 +154,9 @@ function normalizeDb(db) {
   db.groceryRecent = Array.isArray(db.groceryRecent) ? db.groceryRecent : [];
   // Last link used per grocery name (lower case), so "Recently bought" can re-add it with its link.
   db.groceryLinks = db.groceryLinks && typeof db.groceryLinks === 'object' ? db.groceryLinks : {};
+  // Holidays: allowance = housekeeper's total days per year; family / housekeeper = { 'YYYY-MM-DD': 1 }.
+  const v = db.vacation && typeof db.vacation === 'object' ? db.vacation : {};
+  db.vacation = { allowance: v.allowance || {}, family: v.family || {}, housekeeper: v.housekeeper || {} };
   // Friday default gained the small kid. Upcoming Fridays that still carry the
   // old default (2 adults, no kids) get it too; past Fridays stay as they were.
   if ((db.defaultsVersion || 1) < 2) {
@@ -207,10 +210,20 @@ function neighbourWeeks(db, wk) {
   return out;
 }
 function neighbourIds(db, wk) { return new Set(neighbourWeeks(db, wk).keys()); }
+// Tag that is never suggested on days with a big kid (e.g. "Tom does not like").
+// Not set yet → guessed from the tag names; '' → switched off in Settings.
+function bigKidTag(db) {
+  const t = db.settings.bigKidTag;
+  if (t !== undefined && t !== null) return db.tags.includes(t) ? t : '';
+  return db.tags.find(x => /tom/i.test(x) && /(not|n't|nicht)/i.test(x)) || '';
+}
+function autoExcludeTags(db, day) { const t = bigKidTag(db); return t && day.people.kidsBig > 0 ? [t] : []; }
 function candidates(db, wk, k, extraExclude = []) {
   const day = getDay(db, wk, k);
   const ex = new Set([...neighbourIds(db, wk), ...weekRecipeIds(db, wk, k), ...extraExclude]);
+  const auto = autoExcludeTags(db, day);
   return db.recipes.filter(r =>
+    !auto.some(t => (r.tags || []).includes(t)) &&
     r.active !== false && !isSnack(r) &&
     (r.rating || 0) >= (day.filter.minRating || 0) &&
     day.filter.tags.every(t => (r.tags || []).includes(t)) &&
@@ -335,6 +348,9 @@ const state = {
   db: emptyDb(),
   tab: lsGet('dinnerplanner.tab', 'overview'),
   planWeek: 'next',             // 'current' | 'next'
+  hYear: 0,                     // holidays tab: 0 = this year, 1 = next year
+  hQ: Math.floor(new Date().getMonth() / 3),
+  hWho: lsGet('dinnerplanner.hwho', 'housekeeper'),
   openMs: null,                 // id of open multi-select dropdown
   rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: true,
   loadError: null,
@@ -415,7 +431,7 @@ function render() {
   const app = $('#app');
   const n = state.db.groceries.length;
   const gc = $('#gcount'); if (gc) { gc.textContent = n || ''; gc.classList.toggle('hidden', !n); }
-  app.innerHTML = ({ overview: renderOverview, plan: renderPlan, recipes: renderRecipes, groceries: renderGroceries, settings: renderSettings }[state.tab] || renderOverview)();
+  app.innerHTML = ({ overview: renderOverview, plan: renderPlan, recipes: renderRecipes, groceries: renderGroceries, holidays: renderHolidays, settings: renderSettings }[state.tab] || renderOverview)();
 }
 
 function renderWeekCard(wk, label) {
@@ -433,7 +449,7 @@ function renderWeekCard(wk, label) {
     return `<div class="day d-${d.k} ${isToday ? 'today' : ''} ${isoDate(date) < today ? 'past' : ''}">
       <div class="dbadge"><span>${d.n.slice(0, 3)}</span><b>${date.getDate()}</b></div>
       <div class="dbody">
-        ${isToday ? '<span class="today-pill">Today</span>' : ''}
+        ${isToday ? '<span class="today-pill">Today</span>' : ''}${vacChips(isoDate(date))}
         ${meal}
         ${day.enabled ? peopleLine(d.k, day.people, isoDate(date) < today) : ''}
         ${day.enabled ? snackLine(state.db, day) : ''}
@@ -478,6 +494,8 @@ function renderPlan() {
     else if (r && sameWeek.includes(r.id)) warn = `<div class="warn">⚠ Already planned on another day this week</div>`;
     if (r && r.active === false) warn += `<div class="warn">⚠ Recipe is inactive</div>`;
     if (isSnack(r)) warn += `<div class="warn">⚠ This is a snack, not a dinner recipe</div>`;
+    const autoHit = r && autoExcludeTags(db, day).find(t => (r.tags || []).includes(t));
+    if (autoHit) warn += `<div class="warn">⚠ Tagged “${esc(autoHit)}” and a big kid is there</div>`;
     const p = day.people, pChg = peopleChanged(d.k, p);
     const step = (field, label) => {
       const def = DEFAULT_PEOPLE[d.k][field], chg = p[field] !== def;
@@ -488,7 +506,7 @@ function renderPlan() {
     };
     const snacks = db.recipes.filter(x => isSnack(x) && (x.active !== false || day.snackIds.includes(x.id))).sort(byTitle);
     return `<section class="card pday d-${d.k} ${day.enabled ? '' : 'off'}">
-      <div class="row phead"><h3>${d.n}</h3><span class="muted small">${fmtShort(dayDate(wk, i))}</span><span class="spacer"></span>
+      <div class="row phead"><h3>${d.n}</h3><span class="muted small">${fmtShort(dayDate(wk, i))}</span>${vacChips(isoDate(dayDate(wk, i)))}<span class="spacer"></span>
         <label class="small row" style="gap:4px"><input type="checkbox" data-action="toggle-day" data-day="${d.k}" ${day.enabled ? 'checked' : ''}> Dinner</label></div>
       ${day.enabled ? `
       <div class="sec">
@@ -500,6 +518,7 @@ function renderPlan() {
             ${[0, 1, 2, 3].map(n => `<option value="${n}" ${day.filter.minRating === n ? 'selected' : ''}>${n ? '★'.repeat(n) + '+' : 'Any rating'}</option>`).join('')}
           </select>
         </div>
+        ${autoExcludeTags(db, day).length ? `<div class="auto-ex small" title="Set in Settings">🚫 Never: ${esc(autoExcludeTags(db, day)[0])} <span class="muted">(big kid there)</span></div>` : ''}
         <div class="small muted" style="margin-top:4px">${nCand} matching recipe${nCand === 1 ? '' : 's'} available</div>
       </div>
       <div class="sec pick">
@@ -618,6 +637,90 @@ function renderGroceries() {
   </div>`;
 }
 
+// ---------------------------------------------------------------- holidays
+const WHO = {
+  family: { label: 'Family', icon: '🏖️', off: 'Family away' },
+  housekeeper: { label: 'Housekeeper', icon: '🧹', off: 'Housekeeper off' },
+};
+const isWeekend = d => d.getDay() === 0 || d.getDay() === 6;
+function vacChips(iso) {
+  const v = state.db.vacation;
+  return ['family', 'housekeeper'].filter(w => v[w][iso]).map(w => `<span class="vac ${w}">${WHO[w].icon} ${WHO[w].off}</span>`).join('');
+}
+const vacDays = (who, year) => Object.keys(state.db.vacation[who]).filter(d => d.startsWith(year + '-')).sort();
+// Consecutive days (weekends in between don't break a period) → [{from, to, n}].
+function vacPeriods(dates) {
+  const out = [];
+  dates.forEach(d => {
+    const last = out[out.length - 1];
+    let gap = last ? addDays(parseIso(last.to), 1) : null;
+    while (gap && isWeekend(gap)) gap = addDays(gap, 1);
+    if (last && isoDate(gap) === d) { last.to = d; last.n++; } else out.push({ from: d, to: d, n: 1 });
+  });
+  return out;
+}
+function monthCal(y, m) {
+  const v = state.db.vacation, today = isoDate(new Date());
+  const first = new Date(y, m, 1), n = new Date(y, m + 1, 0).getDate();
+  const cells = Array((first.getDay() + 6) % 7).fill('<span></span>');
+  for (let d = 1; d <= n; d++) {
+    const dt = new Date(y, m, d), iso = isoDate(dt), we = isWeekend(dt);
+    const cls = [we ? 'we' : '', v.family[iso] ? 'fam' : '', v.housekeeper[iso] ? 'hk' : '', iso === today ? 'today' : '', iso < today ? 'past' : ''].join(' ');
+    const tip = [v.family[iso] && 'Family away', v.housekeeper[iso] && 'Housekeeper off'].filter(Boolean).join(' · ');
+    cells.push(we ? `<span class="cd ${cls}">${d}</span>`
+      : `<button class="cd ${cls}" data-action="h-day" data-date="${iso}" ${tip ? `title="${tip}"` : ''}>${d}</button>`);
+  }
+  return `<div class="card month">
+    <h3>${first.toLocaleDateString('en-GB', { month: 'long' })}</h3>
+    <div class="cal">${['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(x => `<span class="wd">${x}</span>`).join('')}${cells.join('')}</div>
+  </div>`;
+}
+function renderHolidays() {
+  const db = state.db, y = new Date().getFullYear() + state.hYear, q = state.hQ;
+  const today = isoDate(new Date());
+  const hk = vacDays('housekeeper', y), fam = vacDays('family', y);
+  const allow = db.vacation.allowance[y];
+  const taken = hk.filter(d => d < today).length, upcoming = hk.length - taken;
+  let summary;
+  if (allow == null || allow === '') summary = `<div class="muted">Set the housekeeper's total for ${y} in <button class="link-btn" data-action="goto-settings">Settings</button> to count down.</div>`;
+  else {
+    const left = allow - hk.length;
+    const pct = allow ? Math.min(100, Math.round(100 * hk.length / allow)) : 100;
+    const pctTaken = allow ? Math.min(100, Math.round(100 * taken / allow)) : 0;
+    summary = `<div class="hk-big ${left < 0 ? 'over' : left === 0 ? 'done' : ''}">
+        <b>${left < 0 ? -left : left}</b> <span>${left < 0 ? `day${-left === 1 ? '' : 's'} over the ${allow}` : left === 0 ? 'days left — all planned 🎉' : `of ${allow} days not planned yet`}</span></div>
+      <div class="bar" title="${taken} taken · ${upcoming} planned"><i class="t" style="width:${pctTaken}%"></i><i class="p" style="width:${Math.max(0, pct - pctTaken)}%"></i></div>
+      <div class="small muted">${taken} taken · ${upcoming} planned ahead · ${Math.max(0, left)} still open</div>`;
+  }
+  const periods = (who, dates) => {
+    const ps = vacPeriods(dates);
+    return ps.length ? ps.map(p => `<span class="period ${who}">${fmtShort(parseIso(p.from))}${p.n > 1 ? ' – ' + fmtShort(parseIso(p.to)) : ''} · <b>${p.n} day${p.n === 1 ? '' : 's'}</b></span>`).join('') : '<span class="muted small">none yet</span>';
+  };
+  const whoBtn = w => `<button data-action="h-who" data-who="${w}" class="${state.hWho === w ? 'active ' + w : ''}">${WHO[w].icon} ${WHO[w].label}</button>`;
+  return `<div class="master">
+      <span class="seg">
+        <button data-action="h-year" data-y="0" class="${state.hYear === 0 ? 'active' : ''}">${y - state.hYear}</button>
+        <button data-action="h-year" data-y="1" class="${state.hYear === 1 ? 'active' : ''}">${y - state.hYear + 1}</button>
+      </span>
+      <span class="spacer"></span>
+      <span class="small muted">Tap a day for:</span>
+      <span class="seg who">${whoBtn('family')}${whoBtn('housekeeper')}</span>
+    </div>
+    <div class="hol-sum">
+      <section class="card"><h3>🧹 Housekeeper ${y}</h3>${summary}<div class="periods">${periods('housekeeper', hk)}</div></section>
+      <section class="card"><h3>🏖️ Family ${y}</h3><div class="fam-big"><b>${fam.length}</b> <span>day${fam.length === 1 ? '' : 's'} away</span></div><div class="periods">${periods('family', fam)}</div></section>
+    </div>
+    <div class="qnav">
+      <button class="btn sm" data-action="h-q" data-d="-1" ${q === 0 ? 'disabled' : ''}>‹</button>
+      <b>${['Jan – Mar', 'Apr – Jun', 'Jul – Sep', 'Oct – Dec'][q]} ${y}</b>
+      <button class="btn sm" data-action="h-q" data-d="1" ${q === 3 ? 'disabled' : ''}>›</button>
+      <span class="spacer"></span>
+      <span class="legend"><i class="fam"></i> Family <i class="hk"></i> Housekeeper <i class="fam hk"></i> both</span>
+    </div>
+    <div class="months">${[0, 1, 2].map(i => monthCal(y, q * 3 + i)).join('')}</div>
+    <p class="small muted">Weekends don't count. Tapping a coloured day again removes it.</p>`;
+}
+
 function renderSettings() {
   const db = state.db;
   const tagRows = db.tags.map((t, i) => `<div class="tag-row">
@@ -627,7 +730,26 @@ function renderSettings() {
       ${Store.canEdit ? `<button class="btn sm" data-action="rename-tag" data-i="${i}">Rename</button>
       <button class="btn sm danger" data-action="delete-tag" data-i="${i}">Delete</button>` : ''}
     </div>`).join('');
+  const y0 = new Date().getFullYear();
+  const allowIn = y => `<label class="allow"><span>${y}</span>
+      <input type="number" min="0" max="366" inputmode="numeric" data-action="h-allow" data-year="${y}" value="${db.vacation.allowance[y] ?? ''}" placeholder="e.g. 25"> days</label>`;
+  const bk = bigKidTag(db);
   return `<div class="weeks">
+    <div class="stack">
+    <section class="card">
+      <h2>🧹 Housekeeper holidays</h2>
+      <p class="small muted" style="margin-top:-8px">Total holiday days per year. The Holidays tab counts down from this.</p>
+      <div class="row">${allowIn(y0)}${allowIn(y0 + 1)}</div>
+    </section>
+    <section class="card">
+      <h2>🧒 Big kid days</h2>
+      <p class="small muted" style="margin-top:-8px">On days with at least one big kid, recipes with this tag are never suggested.</p>
+      <select data-action="bigkid-tag">
+        <option value="" ${bk ? '' : 'selected'}>— nothing excluded —</option>
+        ${db.tags.map(t => `<option value="${esc(t)}" ${t === bk ? 'selected' : ''}>${esc(t)}</option>`).join('')}
+      </select>
+    </section>
+    </div>
     <section class="card">
       <h2>Tags</h2>
       ${tagRows || '<p class="muted">No tags.</p>'}
@@ -847,6 +969,16 @@ document.addEventListener('click', e => {
       setTimeout(() => groceryDone(id), 220);
       break;
     }
+    case 'h-year': state.hYear = Number(el.dataset.y); state.hQ = state.hYear ? 0 : Math.floor(new Date().getMonth() / 3); render(); break;
+    case 'h-q': state.hQ = Math.max(0, Math.min(3, state.hQ + Number(el.dataset.d))); render(); break;
+    case 'h-who': state.hWho = el.dataset.who; lsSet('dinnerplanner.hwho', state.hWho); render(); break;
+    case 'goto-settings': state.tab = 'settings'; lsSet('dinnerplanner.tab', 'settings'); render(); break;
+    case 'h-day': {
+      const iso = el.dataset.date, who = state.hWho, on = !state.db.vacation[who][iso];
+      // The target state is decided now, so a replay after a save conflict can't flip it back.
+      mutate(db => { if (on) db.vacation[who][iso] = 1; else delete db.vacation[who][iso]; }, `${WHO[who].label} holiday ${on ? 'on' : 'off'}: ${iso}`);
+      break;
+    }
     case 'g-readd': addGrocery(el.dataset.name, state.db.groceryLinks[el.dataset.name.toLowerCase()] || ''); break;
     case 'g-clear-recent': mutate(db => { db.groceryRecent = []; }, 'Groceries: clear recently bought'); break;
     case 'close': closeModal(); break;
@@ -902,6 +1034,7 @@ function renameTag(db, old, nu) {
   const fix = arr => { const out = arr.map(t => t === old ? nu : t).filter(Boolean); return [...new Set(out)]; };
   db.tags = fix(db.tags);
   db.recipes.forEach(r => { r.tags = fix(r.tags || []); });
+  if (db.settings.bigKidTag === old) db.settings.bigKidTag = nu || '';
   Object.values(db.weeks).forEach(w => Object.values(w.days || {}).forEach(d => { if (d.filter?.tags) d.filter.tags = fix(d.filter.tags); if (d.filter?.excludeTags) d.filter.excludeTags = fix(d.filter.excludeTags); }));
 }
 
@@ -932,6 +1065,12 @@ document.addEventListener('change', e => {
       const day = ensureDay(db, wk, k), id = el.dataset.id;
       day.snackIds = el.checked ? [...new Set([...(day.snackIds || []), id])] : (day.snackIds || []).filter(x => x !== id);
     }, `Snacks ${k} (${wk})`); break;
+    case 'h-allow': {
+      const y = el.dataset.year, n = el.value === '' ? null : Math.max(0, Math.round(Number(el.value)));
+      mutate(db => { if (n == null) delete db.vacation.allowance[y]; else db.vacation.allowance[y] = n; }, `Housekeeper holidays ${y}: ${n ?? 'cleared'}`);
+      break;
+    }
+    case 'bigkid-tag': mutate(db => { db.settings.bigKidTag = el.value; }, `Big kid days: never ${el.value || 'nothing'}`); break;
     case 'snacks': { const v = el.value; mutate(db => { ensureDay(db, wk, k).snacks = v; }, `Snacks ${k} (${wk})`); break; }
     case 'rtag': keepOpen(); state.rTags = el.checked ? [...state.rTags.filter(t => !(el.dataset.value.startsWith('type:') && t.startsWith('type:'))), el.dataset.value] : state.rTags.filter(t => t !== el.dataset.value);
       if (el.checked) state.rExTags = state.rExTags.filter(t => t !== el.dataset.value); render(); break;
