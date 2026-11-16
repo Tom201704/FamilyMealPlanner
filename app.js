@@ -156,7 +156,9 @@ function normalizeDb(db) {
   db.groceryLinks = db.groceryLinks && typeof db.groceryLinks === 'object' ? db.groceryLinks : {};
   // Holidays: allowance = housekeeper's total days per year; family / housekeeper = { 'YYYY-MM-DD': 1 }.
   const v = db.vacation && typeof db.vacation === 'object' ? db.vacation : {};
-  db.vacation = { allowance: v.allowance || {}, family: v.family || {}, housekeeper: v.housekeeper || {} };
+  // carry = manual carry-over per year; startYear = first tracked year (its carry-over can only be typed in).
+  db.vacation = { allowance: v.allowance || {}, carry: v.carry || {}, startYear: v.startYear ?? 2026,
+    family: v.family || {}, housekeeper: v.housekeeper || {} };
   // Friday default gained the small kid. Upcoming Fridays that still carry the
   // old default (2 adults, no kids) get it too; past Fridays stay as they were.
   if ((db.defaultsVersion || 1) < 2) {
@@ -640,24 +642,57 @@ function renderGroceries() {
 // ---------------------------------------------------------------- holidays
 const WHO = {
   family: { label: 'Family', icon: '🏖️', off: 'Family away' },
-  housekeeper: { label: 'Housekeeper', icon: '🧹', off: 'Housekeeper off' },
+  housekeeper: { label: 'Sara', icon: '', off: 'Sara off' },
 };
-// Housekeeper's yearly holiday total, unless set otherwise in Settings.
+const whoName = w => (WHO[w].icon ? WHO[w].icon + ' ' : '') + WHO[w].label;
+// Public holidays of the Canton of Zurich (Easter by the Gregorian computus).
+function easterSunday(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const n = h + l - 7 * m + 114;
+  return new Date(y, Math.floor(n / 31) - 1, (n % 31) + 1);
+}
+const _ph = {};
+function publicHolidays(y) {
+  if (_ph[y]) return _ph[y];
+  const e = easterSunday(y), at = (d, name) => [isoDate(d), name];
+  return (_ph[y] = Object.fromEntries([
+    at(new Date(y, 0, 1), "New Year's Day"), at(new Date(y, 0, 2), "Berchtold's Day"),
+    at(addDays(e, -2), 'Good Friday'), at(addDays(e, 1), 'Easter Monday'),
+    at(new Date(y, 4, 1), 'Labour Day'), at(addDays(e, 39), 'Ascension Day'), at(addDays(e, 50), 'Whit Monday'),
+    at(new Date(y, 7, 1), 'Swiss National Day'), at(new Date(y, 11, 25), 'Christmas Day'), at(new Date(y, 11, 26), "St Stephen's Day"),
+  ]));
+}
+const publicHoliday = iso => publicHolidays(Number(iso.slice(0, 4)))[iso] || '';
+// Sara's yearly holiday total, unless set otherwise in Settings.
 const HK_DEFAULT_DAYS = 20;
 const hkAllowance = (db, y) => db.vacation.allowance[y] ?? HK_DEFAULT_DAYS;
+// Days left over from the year before. Typed in Settings, otherwise worked out from that
+// year (only after the first tracked year — before that the tool has no data).
+function hkCarryAuto(db, y) {
+  if (y <= db.vacation.startYear) return 0;
+  return Math.max(0, hkAllowance(db, y - 1) + hkCarry(db, y - 1) - vacDaysOf(db, 'housekeeper', y - 1).length);
+}
+const hkCarry = (db, y) => db.vacation.carry[y] ?? hkCarryAuto(db, y);
+// The first days off of a year use up the carry-over.
+const hkCarryDays = (db, y) => new Set(vacDaysOf(db, 'housekeeper', y).slice(0, hkCarry(db, y)));
 const isWeekend = d => d.getDay() === 0 || d.getDay() === 6;
 function vacChips(iso) {
-  const v = state.db.vacation;
-  return ['family', 'housekeeper'].filter(w => v[w][iso]).map(w => `<span class="vac ${w}">${WHO[w].icon} ${WHO[w].off}</span>`).join('');
+  const v = state.db.vacation, ph = publicHoliday(iso);
+  return (ph ? `<span class="vac ph">🇨🇭 ${ph}</span>` : '') + ['family', 'housekeeper'].filter(w => v[w][iso]).map(w => `<span class="vac ${w}">${WHO[w].icon ? WHO[w].icon + ' ' : ''}${WHO[w].off}</span>`).join('');
 }
-const vacDays = (who, year) => Object.keys(state.db.vacation[who]).filter(d => d.startsWith(year + '-')).sort();
+// Days off that count: weekdays that are not a public holiday.
+const vacDaysOf = (db, who, year) => Object.keys(db.vacation[who])
+  .filter(d => d.startsWith(year + '-') && !isWeekend(parseIso(d)) && !publicHoliday(d)).sort();
+const vacDays = (who, year) => vacDaysOf(state.db, who, year);
 // Consecutive days (weekends in between don't break a period) → [{from, to, n}].
 function vacPeriods(dates) {
   const out = [];
   dates.forEach(d => {
     const last = out[out.length - 1];
     let gap = last ? addDays(parseIso(last.to), 1) : null;
-    while (gap && isWeekend(gap)) gap = addDays(gap, 1);
+    while (gap && (isWeekend(gap) || publicHoliday(isoDate(gap)))) gap = addDays(gap, 1);
     if (last && isoDate(gap) === d) { last.to = d; last.n++; } else out.push({ from: d, to: d, n: 1 });
   });
   return out;
@@ -666,14 +701,16 @@ function vacPeriods(dates) {
 const H_LOCK_DAYS = 14;
 const hLockBefore = () => isoDate(addDays(new Date(), -H_LOCK_DAYS));
 function monthCal(y, m) {
-  const v = state.db.vacation, today = isoDate(new Date()), lock = hLockBefore();
+  const v = state.db.vacation, today = isoDate(new Date()), lock = hLockBefore(), carryDays = hkCarryDays(state.db, y);
   const first = new Date(y, m, 1), n = new Date(y, m + 1, 0).getDate();
   const cells = Array((first.getDay() + 6) % 7).fill('<span></span>');
   for (let d = 1; d <= n; d++) {
     const dt = new Date(y, m, d), iso = isoDate(dt), we = isWeekend(dt), locked = iso < lock;
-    const cls = [we ? 'we' : '', locked ? 'locked' : '', v.family[iso] ? 'fam' : '', v.housekeeper[iso] ? 'hk' : '', iso === today ? 'today' : '', iso < today ? 'past' : ''].join(' ');
-    const tip = [v.family[iso] && 'Family away', v.housekeeper[iso] && 'Housekeeper off'].filter(Boolean).join(' · ');
-    cells.push(we || locked ? `<span class="cd ${cls}" ${tip ? `title="${tip}"` : ''}>${d}</span>`
+    const cls = [we ? 'we' : '', locked ? 'locked' : '', publicHoliday(iso) ? 'ph' : '', v.family[iso] ? 'fam' : '', v.housekeeper[iso] ? 'hk' : '', carryDays.has(iso) ? 'carry' : '', iso === today ? 'today' : '', iso < today ? 'past' : ''].join(' ');
+    const ph = publicHoliday(iso);
+    const hkTip = v.housekeeper[iso] && (WHO.housekeeper.off + (carryDays.has(iso) ? ` (carry-over from ${y - 1})` : ''));
+    const tip = [ph && `🇨🇭 ${ph}`, v.family[iso] && WHO.family.off, hkTip].filter(Boolean).join(' · ');
+    cells.push(we || locked || ph ? `<span class="cd ${cls}" ${tip ? `title="${tip}"` : ''}>${d}</span>`
       : `<button class="cd ${cls}" data-action="h-day" data-date="${iso}" ${tip ? `title="${tip}"` : ''}>${d}</button>`);
   }
   return `<div class="card month">
@@ -697,8 +734,11 @@ function renderHolidays() {
   const title = a.y === b.y ? `${mName(a)} – ${mName(b)} ${a.y}` : `${mName(a)} ${a.y} – ${mName(b)} ${b.y}`;
   const today = isoDate(new Date());
   const hk = vacDays('housekeeper', y), fam = vacDays('family', y);
-  const allow = hkAllowance(db, y);
+  const base = hkAllowance(db, y), carry = hkCarry(db, y), allow = base + carry;
   const taken = hk.filter(d => d < today).length, upcoming = hk.length - taken;
+  // Carry-over is used up first, then this year's days.
+  const carryUsed = Math.min(carry, hk.length), carryLeft = carry - carryUsed;
+  const baseLeft = base - Math.max(0, hk.length - carry);
   let summary;
   {
     const left = allow - hk.length;
@@ -707,13 +747,17 @@ function renderHolidays() {
     summary = `<div class="hk-big ${left < 0 ? 'over' : left === 0 ? 'done' : ''}">
         <b>${left < 0 ? -left : left}</b> <span>${left < 0 ? `day${-left === 1 ? '' : 's'} over the ${allow}` : left === 0 ? 'days left — all planned 🎉' : `of ${allow} days not planned yet`}</span></div>
       <div class="bar" title="${taken} taken · ${upcoming} planned"><i class="t" style="width:${pctTaken}%"></i><i class="p" style="width:${Math.max(0, pct - pctTaken)}%"></i></div>
-      <div class="small muted">${taken} taken · ${upcoming} planned ahead · ${Math.max(0, left)} still open</div>`;
+      <div class="small muted">${taken} taken · ${upcoming} planned ahead · ${Math.max(0, left)} still open</div>
+      ${carry ? `<div class="pots">
+        <div class="pot carry ${carryLeft ? '' : 'empty'}"><span>Carry-over from ${y - 1}</span><b>${carryLeft}</b> <i>of ${carry} left · used first</i></div>
+        <div class="pot"><span>${y} days</span><b>${Math.max(0, baseLeft)}</b> <i>of ${base} left</i></div>
+      </div>` : ''}`;
   }
   const periods = (who, dates) => {
     const ps = vacPeriods(dates);
     return ps.length ? ps.map(p => `<span class="period ${who}">${fmtShort(parseIso(p.from))}${p.n > 1 ? ' – ' + fmtShort(parseIso(p.to)) : ''} · <b>${p.n} day${p.n === 1 ? '' : 's'}</b></span>`).join('') : '';
   };
-  const whoBtn = w => `<button data-action="h-who" data-who="${w}" class="${state.hWho === w ? 'active ' + w : ''}">${WHO[w].icon} ${WHO[w].label}</button>`;
+  const whoBtn = w => `<button data-action="h-who" data-who="${w}" class="${state.hWho === w ? 'active ' + w : ''}">${whoName(w)}</button>`;
   return `<div class="master">
       <span class="seg">
         <button data-action="h-year" data-y="0" class="${state.hYear === 0 ? 'active' : ''}">${y - state.hYear}</button>
@@ -724,7 +768,7 @@ function renderHolidays() {
       <span class="seg who">${whoBtn('housekeeper')}${whoBtn('family')}</span>
     </div>
     <div class="hol-sum">
-      <section class="card"><h3>🧹 Housekeeper ${y}</h3>${summary}<div class="periods">${periods('housekeeper', hk)}</div></section>
+      <section class="card"><h3>${whoName('housekeeper')} ${y}</h3>${summary}<div class="periods">${periods('housekeeper', hk)}</div></section>
       <section class="card"><h3>🏖️ Family ${y}</h3><div class="fam-big"><b>${fam.length}</b> <span>day${fam.length === 1 ? '' : 's'} away</span></div><div class="periods">${periods('family', fam)}</div></section>
     </div>
     <div class="qnav">
@@ -732,10 +776,10 @@ function renderHolidays() {
       <b>${title}</b>
       <button class="btn sm" data-action="h-m" data-d="1" ${start >= hi ? 'disabled' : ''} title="One month ahead">›</button>
       <span class="spacer"></span>
-      <span class="legend"><i class="hk"></i> Housekeeper <i class="fam"></i> Family <i class="fam hk"></i> both</span>
+      <span class="legend"><i class="hk"></i> ${WHO.housekeeper.label} <i class="hk carry"></i> carry-over <i class="fam"></i> Family <i class="fam hk"></i> both <i class="ph"></i> Public holiday</span>
     </div>
     <div class="months">${shown.map(x => monthCal(x.y, x.m)).join('')}</div>
-    <p class="small muted">Weekends don't count. Tapping a coloured day again removes it. Days more than ${H_LOCK_DAYS / 7} weeks ago can no longer be changed.</p>`;
+    <p class="small muted">Weekends and public holidays (Canton of Zurich) don't count. Tapping a coloured day again removes it. Days more than ${H_LOCK_DAYS / 7} weeks ago can no longer be changed.</p>`;
 }
 
 function renderSettings() {
@@ -748,15 +792,20 @@ function renderSettings() {
       <button class="btn sm danger" data-action="delete-tag" data-i="${i}">Delete</button>` : ''}
     </div>`).join('');
   const y0 = new Date().getFullYear();
-  const allowIn = y => `<label class="allow"><span>${y}</span>
-      <input type="number" min="0" max="366" inputmode="numeric" data-action="h-allow" data-year="${y}" value="${hkAllowance(db, y)}" placeholder="${HK_DEFAULT_DAYS}"> days</label>`;
+  const allowIn = y => {
+    const manual = db.vacation.carry[y], auto = hkCarryAuto(db, y), first = y <= db.vacation.startYear;
+    return `<div class="allow-row"><span class="yr">${y}</span>
+      <label><input type="number" min="0" max="366" inputmode="numeric" data-action="h-allow" data-year="${y}" value="${hkAllowance(db, y)}" placeholder="${HK_DEFAULT_DAYS}"> days</label>
+      <label>+ <input type="number" min="0" max="366" inputmode="numeric" data-action="h-carry" data-year="${y}" value="${manual ?? ''}" placeholder="${first ? 0 : auto}"> left over from ${y - 1}</label>
+      <span class="small muted">${manual != null ? 'typed in' : first ? 'type in what was left' : `automatic: ${auto} not taken in ${y - 1}`}</span></div>`;
+  };
   const bk = bigKidTag(db);
   return `<div class="weeks">
     <div class="stack">
     <section class="card">
-      <h2>🧹 Housekeeper holidays</h2>
-      <p class="small muted" style="margin-top:-8px">Total holiday days per year (${HK_DEFAULT_DAYS} unless changed). The Holidays tab counts down from this.</p>
-      <div class="row">${allowIn(y0)}${allowIn(y0 + 1)}</div>
+      <h2>${whoName('housekeeper')}'s holidays</h2>
+      <p class="small muted" style="margin-top:-8px">Holiday days per year (${HK_DEFAULT_DAYS} unless changed), plus the days left over from the year before. Left-over days are used up first. Leave the carry-over empty to work it out from the days not taken.</p>
+      ${allowIn(y0)}${allowIn(y0 + 1)}
     </section>
     <section class="card">
       <h2>🧒 Big kid days</h2>
@@ -998,6 +1047,7 @@ document.addEventListener('click', e => {
     case 'goto-settings': state.tab = 'settings'; lsSet('dinnerplanner.tab', 'settings'); render(); break;
     case 'h-day': {
       const iso = el.dataset.date, who = state.hWho, on = !state.db.vacation[who][iso];
+      if (publicHoliday(iso)) return toast(`${publicHoliday(iso)} is a public holiday.`);
       if (iso < hLockBefore()) return toast(`Days more than ${H_LOCK_DAYS / 7} weeks ago can't be changed.`);
       // The target state is decided now, so a replay after a save conflict can't flip it back.
       mutate(db => { if (on) db.vacation[who][iso] = 1; else delete db.vacation[who][iso]; }, `${WHO[who].label} holiday ${on ? 'on' : 'off'}: ${iso}`);
@@ -1089,9 +1139,14 @@ document.addEventListener('change', e => {
       const day = ensureDay(db, wk, k), id = el.dataset.id;
       day.snackIds = el.checked ? [...new Set([...(day.snackIds || []), id])] : (day.snackIds || []).filter(x => x !== id);
     }, `Snacks ${k} (${wk})`); break;
+    case 'h-carry': {
+      const y = el.dataset.year, n = el.value === '' ? null : Math.max(0, Math.round(Number(el.value)));
+      mutate(db => { if (n == null) delete db.vacation.carry[y]; else db.vacation.carry[y] = n; }, `${WHO.housekeeper.label}'s carry-over into ${y}: ${n ?? 'automatic'}`);
+      break;
+    }
     case 'h-allow': {
       const y = el.dataset.year, n = el.value === '' ? null : Math.max(0, Math.round(Number(el.value)));
-      mutate(db => { if (n == null) delete db.vacation.allowance[y]; else db.vacation.allowance[y] = n; }, `Housekeeper holidays ${y}: ${n ?? `default ${HK_DEFAULT_DAYS}`}`);
+      mutate(db => { if (n == null) delete db.vacation.allowance[y]; else db.vacation.allowance[y] = n; }, `${WHO.housekeeper.label}'s holidays ${y}: ${n ?? `default ${HK_DEFAULT_DAYS}`}`);
       break;
     }
     case 'bigkid-tag': mutate(db => { db.settings.bigKidTag = el.value; }, `Big kid days: never ${el.value || 'nothing'}`); break;
