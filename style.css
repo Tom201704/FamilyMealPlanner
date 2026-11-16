@@ -351,6 +351,9 @@ label.combo-item { margin: 0; }
 button.cd:hover { transform: scale(1.1); box-shadow: 0 0 0 2px var(--line); }
 .cd.we { background: transparent; color: #cfc6bd; cursor: default; }
 .cd.past { color: var(--muted); }
+.cd.locked { cursor: default; background: #f3eee8; color: #c4bab0; }
+.cd.locked.fam, .cd.locked.hk { opacity: .5; }
+.cd.we.locked { background: transparent; color: #ddd5cc; }
 .cd.today { box-shadow: 0 0 0 2px var(--ink); }
 .cd.fam, .legend i.fam { background: var(--fam); color: #fff; }
 .cd.hk, .legend i.hk { background: var(--hk); color: #fff; }
@@ -412,3 +415,4 @@ button.cd:hover { transform: scale(1.1); box-shadow: 0 0 0 2px var(--line); }
   .rfilters details.ms { position: static; }
   .rfilters .ms-pop { left: 0; right: 0; }
 }
+.periods:empty { display: none; }

@@ -349,7 +349,7 @@ const state = {
   tab: lsGet('dinnerplanner.tab', 'overview'),
   planWeek: 'next',             // 'current' | 'next'
   hYear: 0,                     // holidays tab: 0 = this year, 1 = next year
-  hQ: Math.floor(new Date().getMonth() / 3),
+  hStart: null,                 // holidays tab: first shown month as year*12+month (null = this month)
   hWho: lsGet('dinnerplanner.hwho', 'housekeeper'),
   openMs: null,                 // id of open multi-select dropdown
   rq: '', rTags: [], rExTags: [], rSort: 'title', rInactive: true,
@@ -642,6 +642,9 @@ const WHO = {
   family: { label: 'Family', icon: '🏖️', off: 'Family away' },
   housekeeper: { label: 'Housekeeper', icon: '🧹', off: 'Housekeeper off' },
 };
+// Housekeeper's yearly holiday total, unless set otherwise in Settings.
+const HK_DEFAULT_DAYS = 20;
+const hkAllowance = (db, y) => db.vacation.allowance[y] ?? HK_DEFAULT_DAYS;
 const isWeekend = d => d.getDay() === 0 || d.getDay() === 6;
 function vacChips(iso) {
   const v = state.db.vacation;
@@ -659,15 +662,18 @@ function vacPeriods(dates) {
   });
   return out;
 }
+// Holidays further back than this can no longer be changed.
+const H_LOCK_DAYS = 14;
+const hLockBefore = () => isoDate(addDays(new Date(), -H_LOCK_DAYS));
 function monthCal(y, m) {
-  const v = state.db.vacation, today = isoDate(new Date());
+  const v = state.db.vacation, today = isoDate(new Date()), lock = hLockBefore();
   const first = new Date(y, m, 1), n = new Date(y, m + 1, 0).getDate();
   const cells = Array((first.getDay() + 6) % 7).fill('<span></span>');
   for (let d = 1; d <= n; d++) {
-    const dt = new Date(y, m, d), iso = isoDate(dt), we = isWeekend(dt);
-    const cls = [we ? 'we' : '', v.family[iso] ? 'fam' : '', v.housekeeper[iso] ? 'hk' : '', iso === today ? 'today' : '', iso < today ? 'past' : ''].join(' ');
+    const dt = new Date(y, m, d), iso = isoDate(dt), we = isWeekend(dt), locked = iso < lock;
+    const cls = [we ? 'we' : '', locked ? 'locked' : '', v.family[iso] ? 'fam' : '', v.housekeeper[iso] ? 'hk' : '', iso === today ? 'today' : '', iso < today ? 'past' : ''].join(' ');
     const tip = [v.family[iso] && 'Family away', v.housekeeper[iso] && 'Housekeeper off'].filter(Boolean).join(' · ');
-    cells.push(we ? `<span class="cd ${cls}">${d}</span>`
+    cells.push(we || locked ? `<span class="cd ${cls}" ${tip ? `title="${tip}"` : ''}>${d}</span>`
       : `<button class="cd ${cls}" data-action="h-day" data-date="${iso}" ${tip ? `title="${tip}"` : ''}>${d}</button>`);
   }
   return `<div class="card month">
@@ -675,15 +681,26 @@ function monthCal(y, m) {
     <div class="cal">${['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(x => `<span class="wd">${x}</span>`).join('')}${cells.join('')}</div>
   </div>`;
 }
+// The calendar rolls one month at a time, from January this year up to the last
+// three months of next year. Months are counted as year*12+month.
+function hMonthRange() { const y = new Date().getFullYear(); return [y * 12, (y + 1) * 12 + 9]; }
+function hStart() {
+  const [lo, hi] = hMonthRange(), now = new Date();
+  return Math.max(lo, Math.min(hi, state.hStart ?? now.getFullYear() * 12 + now.getMonth()));
+}
 function renderHolidays() {
-  const db = state.db, y = new Date().getFullYear() + state.hYear, q = state.hQ;
+  const db = state.db, y = new Date().getFullYear() + state.hYear;
+  const [lo, hi] = hMonthRange(), start = hStart();
+  const shown = [0, 1, 2].map(i => ({ y: Math.floor((start + i) / 12), m: (start + i) % 12 }));
+  const mName = x => new Date(x.y, x.m, 1).toLocaleDateString('en-GB', { month: 'short' });
+  const a = shown[0], b = shown[2];
+  const title = a.y === b.y ? `${mName(a)} – ${mName(b)} ${a.y}` : `${mName(a)} ${a.y} – ${mName(b)} ${b.y}`;
   const today = isoDate(new Date());
   const hk = vacDays('housekeeper', y), fam = vacDays('family', y);
-  const allow = db.vacation.allowance[y];
+  const allow = hkAllowance(db, y);
   const taken = hk.filter(d => d < today).length, upcoming = hk.length - taken;
   let summary;
-  if (allow == null || allow === '') summary = `<div class="muted">Set the housekeeper's total for ${y} in <button class="link-btn" data-action="goto-settings">Settings</button> to count down.</div>`;
-  else {
+  {
     const left = allow - hk.length;
     const pct = allow ? Math.min(100, Math.round(100 * hk.length / allow)) : 100;
     const pctTaken = allow ? Math.min(100, Math.round(100 * taken / allow)) : 0;
@@ -694,7 +711,7 @@ function renderHolidays() {
   }
   const periods = (who, dates) => {
     const ps = vacPeriods(dates);
-    return ps.length ? ps.map(p => `<span class="period ${who}">${fmtShort(parseIso(p.from))}${p.n > 1 ? ' – ' + fmtShort(parseIso(p.to)) : ''} · <b>${p.n} day${p.n === 1 ? '' : 's'}</b></span>`).join('') : '<span class="muted small">none yet</span>';
+    return ps.length ? ps.map(p => `<span class="period ${who}">${fmtShort(parseIso(p.from))}${p.n > 1 ? ' – ' + fmtShort(parseIso(p.to)) : ''} · <b>${p.n} day${p.n === 1 ? '' : 's'}</b></span>`).join('') : '';
   };
   const whoBtn = w => `<button data-action="h-who" data-who="${w}" class="${state.hWho === w ? 'active ' + w : ''}">${WHO[w].icon} ${WHO[w].label}</button>`;
   return `<div class="master">
@@ -704,21 +721,21 @@ function renderHolidays() {
       </span>
       <span class="spacer"></span>
       <span class="small muted">Tap a day for:</span>
-      <span class="seg who">${whoBtn('family')}${whoBtn('housekeeper')}</span>
+      <span class="seg who">${whoBtn('housekeeper')}${whoBtn('family')}</span>
     </div>
     <div class="hol-sum">
       <section class="card"><h3>🧹 Housekeeper ${y}</h3>${summary}<div class="periods">${periods('housekeeper', hk)}</div></section>
       <section class="card"><h3>🏖️ Family ${y}</h3><div class="fam-big"><b>${fam.length}</b> <span>day${fam.length === 1 ? '' : 's'} away</span></div><div class="periods">${periods('family', fam)}</div></section>
     </div>
     <div class="qnav">
-      <button class="btn sm" data-action="h-q" data-d="-1" ${q === 0 ? 'disabled' : ''}>‹</button>
-      <b>${['Jan – Mar', 'Apr – Jun', 'Jul – Sep', 'Oct – Dec'][q]} ${y}</b>
-      <button class="btn sm" data-action="h-q" data-d="1" ${q === 3 ? 'disabled' : ''}>›</button>
+      <button class="btn sm" data-action="h-m" data-d="-1" ${start <= lo ? 'disabled' : ''} title="One month back">‹</button>
+      <b>${title}</b>
+      <button class="btn sm" data-action="h-m" data-d="1" ${start >= hi ? 'disabled' : ''} title="One month ahead">›</button>
       <span class="spacer"></span>
-      <span class="legend"><i class="fam"></i> Family <i class="hk"></i> Housekeeper <i class="fam hk"></i> both</span>
+      <span class="legend"><i class="hk"></i> Housekeeper <i class="fam"></i> Family <i class="fam hk"></i> both</span>
     </div>
-    <div class="months">${[0, 1, 2].map(i => monthCal(y, q * 3 + i)).join('')}</div>
-    <p class="small muted">Weekends don't count. Tapping a coloured day again removes it.</p>`;
+    <div class="months">${shown.map(x => monthCal(x.y, x.m)).join('')}</div>
+    <p class="small muted">Weekends don't count. Tapping a coloured day again removes it. Days more than ${H_LOCK_DAYS / 7} weeks ago can no longer be changed.</p>`;
 }
 
 function renderSettings() {
@@ -732,13 +749,13 @@ function renderSettings() {
     </div>`).join('');
   const y0 = new Date().getFullYear();
   const allowIn = y => `<label class="allow"><span>${y}</span>
-      <input type="number" min="0" max="366" inputmode="numeric" data-action="h-allow" data-year="${y}" value="${db.vacation.allowance[y] ?? ''}" placeholder="e.g. 25"> days</label>`;
+      <input type="number" min="0" max="366" inputmode="numeric" data-action="h-allow" data-year="${y}" value="${hkAllowance(db, y)}" placeholder="${HK_DEFAULT_DAYS}"> days</label>`;
   const bk = bigKidTag(db);
   return `<div class="weeks">
     <div class="stack">
     <section class="card">
       <h2>🧹 Housekeeper holidays</h2>
-      <p class="small muted" style="margin-top:-8px">Total holiday days per year. The Holidays tab counts down from this.</p>
+      <p class="small muted" style="margin-top:-8px">Total holiday days per year (${HK_DEFAULT_DAYS} unless changed). The Holidays tab counts down from this.</p>
       <div class="row">${allowIn(y0)}${allowIn(y0 + 1)}</div>
     </section>
     <section class="card">
@@ -969,12 +986,19 @@ document.addEventListener('click', e => {
       setTimeout(() => groceryDone(id), 220);
       break;
     }
-    case 'h-year': state.hYear = Number(el.dataset.y); state.hQ = state.hYear ? 0 : Math.floor(new Date().getMonth() / 3); render(); break;
-    case 'h-q': state.hQ = Math.max(0, Math.min(3, state.hQ + Number(el.dataset.d))); render(); break;
+    case 'h-year': state.hYear = Number(el.dataset.y); state.hStart = state.hYear ? (new Date().getFullYear() + 1) * 12 : null; render(); break;
+    case 'h-m': {
+      const [lo, hi] = hMonthRange();
+      state.hStart = Math.max(lo, Math.min(hi, hStart() + Number(el.dataset.d)));
+      // The summary follows the year of the middle month shown.
+      state.hYear = Math.max(0, Math.min(1, Math.floor((state.hStart + 1) / 12) - new Date().getFullYear()));
+      render(); break;
+    }
     case 'h-who': state.hWho = el.dataset.who; lsSet('dinnerplanner.hwho', state.hWho); render(); break;
     case 'goto-settings': state.tab = 'settings'; lsSet('dinnerplanner.tab', 'settings'); render(); break;
     case 'h-day': {
       const iso = el.dataset.date, who = state.hWho, on = !state.db.vacation[who][iso];
+      if (iso < hLockBefore()) return toast(`Days more than ${H_LOCK_DAYS / 7} weeks ago can't be changed.`);
       // The target state is decided now, so a replay after a save conflict can't flip it back.
       mutate(db => { if (on) db.vacation[who][iso] = 1; else delete db.vacation[who][iso]; }, `${WHO[who].label} holiday ${on ? 'on' : 'off'}: ${iso}`);
       break;
@@ -1067,7 +1091,7 @@ document.addEventListener('change', e => {
     }, `Snacks ${k} (${wk})`); break;
     case 'h-allow': {
       const y = el.dataset.year, n = el.value === '' ? null : Math.max(0, Math.round(Number(el.value)));
-      mutate(db => { if (n == null) delete db.vacation.allowance[y]; else db.vacation.allowance[y] = n; }, `Housekeeper holidays ${y}: ${n ?? 'cleared'}`);
+      mutate(db => { if (n == null) delete db.vacation.allowance[y]; else db.vacation.allowance[y] = n; }, `Housekeeper holidays ${y}: ${n ?? `default ${HK_DEFAULT_DAYS}`}`);
       break;
     }
     case 'bigkid-tag': mutate(db => { db.settings.bigKidTag = el.value; }, `Big kid days: never ${el.value || 'nothing'}`); break;
