@@ -255,6 +255,28 @@ function lastPlanned(db, id) {
   }
   return last;
 }
+// How often each recipe was cooked: past days (before today) with dinner on and
+// the recipe as dinner or snack. Counted from the plan, not stored, so editing
+// or clearing an old day changes the count and it can never drift.
+function cookedStats(db) {
+  const today = isoDate(new Date()), m = new Map();
+  for (const [wk, w] of Object.entries(db.weeks)) {
+    DAYS.forEach((d, i) => {
+      const day = w.days?.[d.k], dt = isoDate(dayDate(wk, i));
+      if (!day || day.enabled === false || dt >= today) return;
+      new Set([day.recipeId, ...(day.snackIds || [])].filter(Boolean)).forEach(id => {
+        const s = m.get(id) || { n: 0, last: null };
+        s.n++; if (!s.last || dt > s.last) s.last = dt;
+        m.set(id, s);
+      });
+    });
+  }
+  return m;
+}
+const fmtLong = d => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+// created is a UTC timestamp; shown as the local calendar day.
+const addedText = r => r.created ? fmtLong(new Date(r.created)) : 'unknown';
+const cookedText = s => s?.n ? `${s.n}× (last ${fmtLong(parseIso(s.last))})` : 'never';
 
 // ---------------------------------------------------------------- storage
 // Shared mode: Google Apps Script web app (backend/Code.gs), URL in config.js.
@@ -594,10 +616,17 @@ function renderRecipes() {
   const has = (r, t) => t === TYPE_DINNER ? !isSnack(r) : t === TYPE_SNACK ? isSnack(r) : (r.tags || []).includes(t);
   if (state.rTags.length) list = list.filter(r => state.rTags.every(t => has(r, t)));
   if (state.rExTags.length) list = list.filter(r => !state.rExTags.some(t => has(r, t)));
+  const cooked = cookedStats(db), nC = r => cooked.get(r.id)?.n || 0;
+  const byT = (a, b) => a.title.localeCompare(b.title);
+  // Recipes without a creation date go last in both date orders.
+  const byAdded = dir => (a, b) => (!a.created) - (!b.created) || dir * (a.created || '').localeCompare(b.created || '') || byT(a, b);
   const sorters = {
-    title: (a, b) => a.title.localeCompare(b.title),
+    title: byT,
     rating: (a, b) => (b.rating || 0) - (a.rating || 0) || a.title.localeCompare(b.title),
-    added: (a, b) => (b.created || '').localeCompare(a.created || ''),
+    added: byAdded(-1),
+    oldest: byAdded(1),
+    cooked: (a, b) => nC(b) - nC(a) || byT(a, b),
+    cookedLeast: (a, b) => nC(a) - nC(b) || byT(a, b),
     edited: (a, b) => (b.updated || '').localeCompare(a.updated || ''),
     tags: (a, b) => (a.tags || []).join().localeCompare((b.tags || []).join()) || a.title.localeCompare(b.title),
   };
@@ -615,6 +644,7 @@ function renderRecipes() {
         ${r.link ? ` <a href="${esc(r.link)}" target="_blank" rel="noopener" class="small">link ↗</a>` : ''}
         <div class="desc">${esc(r.description || '')}</div>
         <div>${(r.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>
+        <div class="rmeta">Added ${addedText(r)} · Cooked ${nC(r) ? nC(r) + '×' : 'never'}</div>
       </div>
       ${stars(r.rating)}
     </div>`).join('');
@@ -629,7 +659,7 @@ function renderRecipes() {
       ${multiSelect('rtags', 'Must have: any', opts, state.rTags, 'rtag', '', 'Must have: ', 'inc')}
       ${multiSelect('rxtags', 'Exclude: none', opts, state.rExTags, 'rxtag', '', 'Exclude: ', 'exc')}
       <select data-action="rsort">
-        ${[['title', 'Sort: Title A–Z'], ['rating', 'Sort: Rating'], ['tags', 'Sort: Tags'], ['added', 'Sort: Newest'], ['edited', 'Sort: Recently edited']]
+        ${[['title', 'Sort: Title A–Z'], ['rating', 'Sort: Rating'], ['tags', 'Sort: Tags'], ['added', 'Sort: Newest'], ['oldest', 'Sort: Oldest'], ['cooked', 'Sort: Most cooked'], ['cookedLeast', 'Sort: Least cooked'], ['edited', 'Sort: Recently edited']]
           .map(([v, l]) => `<option value="${v}" ${state.rSort === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select>
       <label class="small row" style="gap:4px"><input type="checkbox" data-action="rinactive" ${state.rInactive ? 'checked' : ''}> Show inactive (${inactive})</label>
@@ -865,7 +895,8 @@ function showRecipe(id) {
     <div>${stars(r.rating)} ${(r.tags || []).map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>
     ${r.link ? `<div><a href="${esc(r.link)}" target="_blank" rel="noopener">Open recipe ↗</a><div class="small muted" style="word-break:break-all">${esc(r.link)}</div></div>` : ''}
     ${r.description ? `<div class="desc-full">${esc(r.description)}</div>` : '<div class="muted">No description.</div>'}
-    <div class="small muted">${last ? `Last planned: ${parseIso(last).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}` : 'Not planned yet'}</div>
+    <div class="small muted">Added: ${addedText(r)}<br>Cooked: ${cookedText(cookedStats(state.db).get(id))}<br>
+      ${last ? `Last planned: ${parseIso(last).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}` : 'Not planned yet'}</div>
     <div class="row"><span class="spacer"></span>
       ${Store.canEdit ? `<button class="btn" data-action="edit-recipe" data-id="${r.id}">Edit</button>` : ''}
       <button class="btn" data-action="close">Close</button></div>
@@ -900,6 +931,7 @@ function renderEditor() {
       <div class="tagboxes">${allTags.map(t => `<label><input type="checkbox" data-action="d-tag" data-value="${esc(t)}" ${d.tags.includes(t) ? 'checked' : ''}> ${esc(t)}</label>`).join('') || '<span class="muted small">No tags yet</span>'}</div>
       <div class="row" style="margin-top:6px"><input type="text" id="d-newtag" placeholder="New tag"><button type="button" class="btn sm" data-action="d-addtag">Add</button></div></div>
     <label class="small row" style="gap:6px"><input type="checkbox" name="active" ${d.active !== false ? 'checked' : ''}> Active (inactive recipes are never suggested)</label>
+    ${d.id ? `<div class="small muted">Added: ${addedText(d)} · Cooked: ${cookedText(cookedStats(state.db).get(d.id))}</div>` : ''}
     <div class="row">
       ${d.id ? '<button type="button" class="btn danger" data-action="delete-recipe">🗑 Delete</button>' : ''}
       <span class="spacer"></span>
