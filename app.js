@@ -345,8 +345,27 @@ async function reload(quiet) {
   render();
 }
 
+// ---------------------------------------------------------------- login
+// Plan and Settings are only shown after logging in (field at the bottom of Recipes).
+// Only the SHA-256 of the password is in the code. This hides tabs; it is not real
+// security: the storage URL itself still accepts changes from anyone who has it.
+const LOGIN_HASH = '305e4f1a706062dbe48b4cf64cf23d53d53a9fb47fd500080e3d5b33909ebc94';
+const LOGIN_TABS = new Set(['plan', 'settings']);
+async function sha256(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function login(pw) {
+  if (!window.crypto?.subtle) return toast('Login needs https.');
+  if (await sha256(pw) !== LOGIN_HASH) { toast('Wrong password.'); $('#lpw')?.select(); return; }
+  state.authed = true; lsSet('dinnerplanner.auth', LOGIN_HASH);
+  toast('Logged in — Plan and Settings are back.'); render();
+}
+function logout() { state.authed = false; lsSet('dinnerplanner.auth', ''); toast('Logged out.'); render(); }
+
 // ---------------------------------------------------------------- ui state
 const state = {
+  authed: lsGet('dinnerplanner.auth', '') === LOGIN_HASH,
   db: emptyDb(),
   tab: lsGet('dinnerplanner.tab', 'overview'),
   planWeek: 'next',             // 'current' | 'next'
@@ -423,7 +442,11 @@ function filterCombo(input) {
 
 // ---------------------------------------------------------------- render
 function render() {
-  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === state.tab));
+  if (!state.authed && LOGIN_TABS.has(state.tab)) state.tab = 'overview';
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.hidden = !state.authed && LOGIN_TABS.has(b.dataset.tab);
+    b.classList.toggle('active', b.dataset.tab === state.tab);
+  });
   $('#banner').innerHTML = state.loadError
     ? `<div class="bar">⚠ ${esc(state.loadError)}</div>`
     : Store.mode === 'local'
@@ -462,7 +485,7 @@ function renderWeekCard(wk, label) {
   return `<section class="card week">
     <div class="week-head"><span class="lbl">${label === 'This week' ? '🗓️' : '🚀'} ${label}</span><span class="muted">Week ${isoWeekNo(parseIso(wk))} · ${weekRange(wk)}</span>
       <span class="spacer"></span>
-      ${Store.canEdit ? `<button class="btn sm" data-action="goto-plan" data-week="${label === 'This week' ? 'current' : 'next'}">Edit</button>` : ''}</div>
+      ${Store.canEdit && state.authed ? `<button class="btn sm" data-action="goto-plan" data-week="${label === 'This week' ? 'current' : 'next'}">Edit</button>` : ''}</div>
     ${days}
   </section>`;
 }
@@ -612,7 +635,11 @@ function renderRecipes() {
       <label class="small row" style="gap:4px"><input type="checkbox" data-action="rinactive" ${state.rInactive ? 'checked' : ''}> Show inactive (${inactive})</label>
     </div>
     <p class="small muted">${list.length} of ${total} shown · tap a tile to edit it</p>
-    <div class="rlist">${rows || '<p class="muted">No recipes match.</p>'}</div>`;
+    <div class="rlist">${rows || '<p class="muted">No recipes match.</p>'}</div>
+    ${state.authed
+      ? `<div class="login small muted">🔓 Logged in · Plan and Settings are shown <button class="btn sm" data-action="logout">Log out</button></div>`
+      : `<form class="login small" id="lform" autocomplete="off">🔒 <input type="password" id="lpw" placeholder="Password" aria-label="Password" autocomplete="current-password">
+          <button class="btn sm" type="submit">Log in</button><span class="muted">for Plan and Settings</span></form>`}`;
 }
 
 function renderGroceries() {
@@ -1044,6 +1071,7 @@ document.addEventListener('click', e => {
       render(); break;
     }
     case 'h-who': state.hWho = el.dataset.who; lsSet('dinnerplanner.hwho', state.hWho); render(); break;
+    case 'logout': logout(); break;
     case 'goto-settings': state.tab = 'settings'; lsSet('dinnerplanner.tab', 'settings'); render(); break;
     case 'h-day': {
       const iso = el.dataset.date, who = state.hWho, on = !state.db.vacation[who][iso];
@@ -1181,6 +1209,7 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('submit', e => {
   if (e.target.id === 'gform') { e.preventDefault(); addGrocery($('#gname').value, $('#glink').value); }
+  if (e.target.id === 'lform') { e.preventDefault(); login($('#lpw').value); }
 });
 document.addEventListener('input', e => {
   if (e.target.classList.contains('combo-q')) { filterCombo(e.target); return; }

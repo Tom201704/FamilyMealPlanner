@@ -413,7 +413,7 @@ button.cd:hover { transform: scale(1.1); box-shadow: 0 0 0 2px var(--line); }
   .top { padding: 8px 12px; gap: 8px; }
   .brand { font-size: 19px; }
   .status { margin-left: auto; font-size: 12px; order: 2; }
-  .tabs { order: 3; width: 100%; display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; border-radius: 18px; }
+  .tabs { order: 3; width: 100%; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; border-radius: 18px; }
   .tabs button { padding: 5px 1px; font-size: 10.5px; border-radius: 14px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; }
   .tabs .ti { display: block; font-size: 17px; }
   .tabs button { position: relative; }
@@ -432,3 +432,8 @@ button.cd:hover { transform: scale(1.1); box-shadow: 0 0 0 2px var(--line); }
   .rfilters .ms-pop { left: 0; right: 0; }
 }
 .periods:empty { display: none; }
+
+/* login (bottom of Recipes) */
+.tabs button[hidden] { display: none; }
+.login { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 22px 0 6px; padding-top: 12px; border-top: 1px dashed #e6dccf; }
+.login input { width: 160px; }

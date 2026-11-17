@@ -8,6 +8,7 @@ Weekly dinner planning (Monday–Friday) from your own recipe collection.
 - **Recipes**: dinner recipes and snacks/sweets (shown in a different colour), each with title, link, description, tags, a 1–3 star rating and active/inactive. Tap a tile to edit it or delete it. The *Must have* / *Exclude* filters also offer Dinner and Snack / Sweets. Only dinner recipes are suggested for dinner. Snacks can be picked in each day's snack field, next to the free text.
 - **Groceries**: a shared shopping list. Every item becomes a tile with an emoji, optionally with a shop link (e.g. Migros or Coop). Tap the tile once it's in the cart; tapping the link only opens the shop page. Recently bought items can be put back with one tap.
 - **Holidays**: a calendar showing three months at a time, rolling one month per click across the year boundary (this year and next year). Choose *Sara* (orange, the housekeeper) or *Family* (blue) and tap the days off; tap again to remove. Days more than 2 weeks in the past are locked. Public holidays of the Canton of Zurich are marked in red and don't count. Sara's days count down from her yearly total (20 unless changed in Settings) plus the days left over from the year before, which are used up first (striped in the calendar), so you can see whether she takes all of them. Holidays also show on the days in Overview and Plan.
+- **Login**: Plan and Settings are only shown after logging in with the password (field at the bottom of Recipes). The device stays logged in until *Log out*. This only hides the tabs: the page's code is public, and the storage still accepts changes from anyone with the link.
 - **Settings**: Sara's holiday total for this and next year, the tag never suggested on days with a big kid (e.g. "Tom does not like"), and the tags (add, rename, delete).
 
 Default headcount: 2 adults every day, plus 1 small kid on Mon/Tue/Fri, plus 1 big kid and 1 small kid on Wed/Thu. You can change it per day, and a changed headcount is highlighted.
@@ -51,7 +52,7 @@ That keeps the URL the same.
 
 ## Updating the code
 
-`index.html` loads `style.css`, `config.js` and `app.js` with a version number (`?v=13`).
+`index.html` loads `style.css`, `config.js` and `app.js` with a version number (`?v=14`).
 Raise it in `index.html` whenever you upload changed files. Otherwise browsers may keep the old
 `app.js` for up to 10 minutes next to the new `index.html`.
 
