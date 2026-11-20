@@ -375,6 +375,13 @@ button.cd:hover { transform: scale(1.1); box-shadow: 0 0 0 2px var(--line); }
 .vac.ph { background: #ffe3e8; color: #d6334f; }
 .cd.fam.hk, .legend i.fam.hk { background: linear-gradient(135deg, var(--fam) 50%, var(--hk) 50%); color: #fff; }
 .cd.past.fam, .cd.past.hk { opacity: .7; }
+/* School holidays: a bar under the number, so it combines with any fill colour. */
+:root { --school: #8a4fd8; }
+.cd { position: relative; }
+.cd.school::after { content: ""; position: absolute; left: 4px; right: 4px; bottom: 3px; height: 4px; border-radius: 2px; background: var(--school); }
+.cd.school.we::after { opacity: .45; }
+.legend i.school { height: 4px; border-radius: 2px; background: var(--school); }
+.vac.school { background: #f1e8fd; color: #6c35b8; }
 @media (max-width: 900px) { .months { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 640px) { .months, .hol-sum { grid-template-columns: 1fr; } }
 

@@ -722,6 +722,37 @@ function publicHolidays(y) {
   ]));
 }
 const publicHoliday = iso => publicHolidays(Number(iso.slice(0, 4)))[iso] || '';
+// School holidays of the City of Zurich (Volksschule), first and last school-free weekday.
+// Source: stadt-zuerich.ch/de/bildung/volksschule/schulferien.html (tables and .ics files,
+// read 20.11.2026). Not computed: the city sets them per school year, so add new years by hand.
+const SCHOOL_HOLIDAYS = [
+  ['2025-12-22', '2026-01-02', 'Christmas holidays'],
+  ['2026-02-09', '2026-02-20', 'Sports holidays'],
+  ['2026-04-20', '2026-05-01', 'Spring holidays'],
+  ['2026-07-13', '2026-08-14', 'Summer holidays'],
+  ['2026-10-05', '2026-10-16', 'Autumn holidays'],
+  ['2026-12-21', '2027-01-01', 'Christmas holidays'],
+  ['2027-02-15', '2027-02-26', 'Sports holidays'],
+  ['2027-04-26', '2027-05-07', 'Spring holidays'],
+  ['2027-07-19', '2027-08-20', 'Summer holidays'],
+  ['2027-10-11', '2027-10-22', 'Autumn holidays'],
+  ['2027-12-20', '2027-12-31', 'Christmas holidays'],
+  ['2028-02-14', '2028-02-25', 'Sports holidays'],
+  ['2028-04-17', '2028-04-28', 'Spring holidays'],
+  ['2028-07-17', '2028-08-18', 'Summer holidays'],
+  ['2028-10-09', '2028-10-20', 'Autumn holidays'],
+  ['2028-12-25', '2029-01-05', 'Christmas holidays'],
+  ['2029-02-12', '2029-02-23', 'Sports holidays'],
+  ['2029-04-23', '2029-05-04', 'Spring holidays'],
+  ['2029-07-16', '2029-08-17', 'Summer holidays'],
+  ['2029-10-08', '2029-10-19', 'Autumn holidays'],
+  ['2029-12-24', '2030-01-04', 'Christmas holidays'],
+  ['2030-02-11', '2030-02-22', 'Sports holidays'],
+  ['2030-04-22', '2030-05-03', 'Spring holidays'],
+  ['2030-07-15', '2030-08-16', 'Summer holidays'],
+];
+// ISO dates compare correctly as strings. Weekends inside a block count as part of it.
+const schoolHoliday = iso => (SCHOOL_HOLIDAYS.find(([a, b]) => iso >= a && iso <= b) || [])[2] || '';
 // Sara's yearly holiday total, unless set otherwise in Settings.
 const HK_DEFAULT_DAYS = 20;
 const hkAllowance = (db, y) => db.vacation.allowance[y] ?? HK_DEFAULT_DAYS;
@@ -737,7 +768,8 @@ const hkCarryDays = (db, y) => new Set(vacDaysOf(db, 'housekeeper', y).slice(0, 
 const isWeekend = d => d.getDay() === 0 || d.getDay() === 6;
 function vacChips(iso) {
   const v = state.db.vacation, ph = publicHoliday(iso);
-  return (ph ? `<span class="vac ph">🇨🇭 ${ph}</span>` : '') + ['family', 'housekeeper'].filter(w => v[w][iso]).map(w => `<span class="vac ${w}">${WHO[w].icon ? WHO[w].icon + ' ' : ''}${WHO[w].off}</span>`).join('');
+  const sh = schoolHoliday(iso);
+  return (ph ? `<span class="vac ph">🇨🇭 ${ph}</span>` : '') + (sh ? `<span class="vac school" title="${sh} (schools, City of Zurich)">🎒 School holidays</span>` : '') + ['family', 'housekeeper'].filter(w => v[w][iso]).map(w => `<span class="vac ${w}">${WHO[w].icon ? WHO[w].icon + ' ' : ''}${WHO[w].off}</span>`).join('');
 }
 // Days off that count: weekdays that are not a public holiday.
 const vacDaysOf = (db, who, year) => Object.keys(db.vacation[who])
@@ -763,10 +795,11 @@ function monthCal(y, m) {
   const cells = Array((first.getDay() + 6) % 7).fill('<span></span>');
   for (let d = 1; d <= n; d++) {
     const dt = new Date(y, m, d), iso = isoDate(dt), we = isWeekend(dt), locked = iso < lock;
-    const cls = [we ? 'we' : '', locked ? 'locked' : '', publicHoliday(iso) ? 'ph' : '', v.family[iso] ? 'fam' : '', v.housekeeper[iso] ? 'hk' : '', carryDays.has(iso) ? 'carry' : '', iso === today ? 'today' : '', iso < today ? 'past' : ''].join(' ');
+    const cls = [we ? 'we' : '', locked ? 'locked' : '', publicHoliday(iso) ? 'ph' : '', v.family[iso] ? 'fam' : '', v.housekeeper[iso] ? 'hk' : '', carryDays.has(iso) ? 'carry' : '', schoolHoliday(iso) ? 'school' : '', iso === today ? 'today' : '', iso < today ? 'past' : ''].join(' ');
     const ph = publicHoliday(iso);
     const hkTip = v.housekeeper[iso] && (WHO.housekeeper.off + (carryDays.has(iso) ? ` (carry-over from ${y - 1})` : ''));
-    const tip = [ph && `🇨🇭 ${ph}`, v.family[iso] && WHO.family.off, hkTip].filter(Boolean).join(' · ');
+    const sh = schoolHoliday(iso);
+    const tip = [ph && `🇨🇭 ${ph}`, sh && `🎒 ${sh}`, v.family[iso] && WHO.family.off, hkTip].filter(Boolean).join(' · ');
     cells.push(we || locked || ph ? `<span class="cd ${cls}" ${tip ? `title="${tip}"` : ''}>${d}</span>`
       : `<button class="cd ${cls}" data-action="h-day" data-date="${iso}" ${tip ? `title="${tip}"` : ''}>${d}</button>`);
   }
@@ -833,10 +866,10 @@ function renderHolidays() {
       <b>${title}</b>
       <button class="btn sm" data-action="h-m" data-d="1" ${start >= hi ? 'disabled' : ''} title="One month ahead">›</button>
       <span class="spacer"></span>
-      <span class="legend"><i class="hk"></i> ${WHO.housekeeper.label} <i class="hk carry"></i> carry-over <i class="fam"></i> Family <i class="fam hk"></i> both <i class="ph"></i> Public holiday</span>
+      <span class="legend"><i class="hk"></i> ${WHO.housekeeper.label} <i class="hk carry"></i> carry-over <i class="fam"></i> Family <i class="fam hk"></i> both <i class="ph"></i> Public holiday <i class="school"></i> School holidays</span>
     </div>
     <div class="months">${shown.map(x => monthCal(x.y, x.m)).join('')}</div>
-    <p class="small muted">Weekends and public holidays (Canton of Zurich) don't count. Tapping a coloured day again removes it. Days more than ${H_LOCK_DAYS / 7} weeks ago can no longer be changed.</p>`;
+    <p class="small muted">The purple bar marks the school holidays of the City of Zurich; they don't change any count. Weekends and public holidays (Canton of Zurich) don't count. Tapping a coloured day again removes it. Days more than ${H_LOCK_DAYS / 7} weeks ago can no longer be changed.</p>`;
 }
 
 function renderSettings() {
